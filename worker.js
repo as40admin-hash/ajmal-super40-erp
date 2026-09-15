@@ -117,9 +117,33 @@ export default {
       return handleApi_(request, env);
     }
 
-    // All non-API requests are served by the static ERP frontend.
+        // All non-API requests are served by the static ERP frontend.
+    // Explicitly preserve UTF-8 for text assets so symbols such as
+    // ✓ • → ↔ ⚙ are rendered correctly.
     if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      const assetResponse = await env.ASSETS.fetch(request);
+      const contentType = assetResponse.headers.get('Content-Type') || '';
+
+      const isTextAsset =
+        /^text\//i.test(contentType) ||
+        /javascript|json|xml|svg/i.test(contentType);
+
+      if (isTextAsset && !/charset=/i.test(contentType)) {
+        const headers = new Headers(assetResponse.headers);
+
+        headers.set(
+          'Content-Type',
+          `${contentType}; charset=utf-8`
+        );
+
+        return new Response(assetResponse.body, {
+          status: assetResponse.status,
+          statusText: assetResponse.statusText,
+          headers
+        });
+      }
+
+      return assetResponse;
     }
 
     return new Response('ERP static asset binding is not configured.', {
