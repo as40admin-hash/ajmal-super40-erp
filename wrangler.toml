@@ -1,0 +1,12 @@
+name = "ajmal-super40-admin-erp"
+main = "worker.js"
+compatibility_date = "2026-09-15"
+workers_dev = true
+
+# Serve the GitHub repository's static ERP frontend through the same Worker.
+# Keep the APPS_SCRIPT_WEB_APP_URL value in Cloudflare's Variables & Secrets
+# dashboard; do not hard-code it here.
+[assets]
+directory = "."
+binding = "ASSETS"
+not_found_handling = "single-page-application"
