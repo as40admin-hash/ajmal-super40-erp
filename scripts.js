@@ -328,25 +328,13 @@ function refreshERPDataAndRender(targetPage, afterSync, options={}) {
 
 function startERPAutoSync(){
   if(state._serverSyncTimer) return;
-  // Google Apps Script has no server-push channel for direct Sheet edits.
-  // Poll the authoritative spreadsheet state and also sync on window focus.
+  // Keep background synchronization at a minimum 20-minute interval so
+  // Settings and other data-entry panels remain stable while being edited.
   state._serverSyncTimer=window.setInterval(()=>{
     if(!isGAS() || !state.session.token || document.hidden) return;
     if(state._serverSyncInFlight || activeEditorNeedsProtection_()) return;
     syncERPData({silent:true,preserveInputs:true});
-  }, 10000);
-
-  window.addEventListener('focus',()=>{
-    if(isGAS() && state.session.token && !state._serverSyncInFlight && !activeEditorNeedsProtection_()){
-      syncERPData({silent:true,preserveInputs:true});
-    }
-  });
-
-  window.addEventListener('pageshow',()=>{
-    if(isGAS() && state.session.token && !state._serverSyncInFlight){
-      syncERPData({silent:true,preserveInputs:true,force:true});
-    }
-  });
+  }, 20 * 60 * 1000);
 }
 
 function render(){
