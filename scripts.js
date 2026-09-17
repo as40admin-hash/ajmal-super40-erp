@@ -759,12 +759,24 @@ function facultyAttendanceHTML(){
 
 function facultyLiveAttendanceRows(){
   const dateKey=normalizeDateKey_(state.date);
-  const records=(state.facultyAttendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===dateKey && String(a.Attendance_Status||'').trim() && (!attendanceOperatorUser() || (String(a.Branch_ID||facultyBranch())===String(facultyBranch()) && String(a.Campus_Name||a.Campus||'').trim().toLowerCase()===assignedCampusName_().toLowerCase())));
   const batches=state.data.batches||[];
   const batchIndex=new Map();
   batches.forEach(b=>{
     const keys=[b.Batch_ID,b.Batch_Code,b.Batch_Name,b['Batch Name'],b.Batch,b['Batch/Batches'],b.Batch_Batches].filter(v=>String(v??'').trim()).map(v=>String(v).trim());
     keys.forEach(k=>{ if(!batchIndex.has(k)) batchIndex.set(k,b); });
+  });
+  const assignedCampus=assignedCampusName_().toLowerCase();
+  const branch=String(facultyBranch()||'').trim();
+  const records=(state.facultyAttendance||[]).filter(a=>{
+    if(normalizeDateKey_(a.Attendance_Date||'')!==dateKey) return false;
+    if(!String(a.Attendance_Status||'').trim()) return false;
+    if(!attendanceOperatorUser()) return true;
+    const b=batchIndex.get(String(a.Batch_ID||'').trim()) || batchIndex.get(String(a.Batch_Code||'').trim()) || {};
+    const rowBranch=String(a.Branch_ID||b.Branch_ID||'').trim();
+    const rowCampus=String(a.Campus_Name||a.Campus||b.Campus_Name||b.Campus||'').trim().toLowerCase();
+    if(branch && branch!=='ALL' && rowBranch!==branch) return false;
+    if(assignedCampus && rowCampus!==assignedCampus) return false;
+    return true;
   });
   const fmap=new Map((state.facultyOptions.faculties||[]).map(f=>[String(f.Faculty_ID||'').trim(),String(f.Initials||f.Abbreviation||'').trim()]));
   return records.map(a=>{
@@ -869,13 +881,46 @@ function renderAttendanceRoster(b,rows,sourceNote){
 }
 
 function batchAttendanceSummary(b){
-  const eligible=Number(b.Expected_Strength||0);
-  const code=String(b.Batch_Code||'').trim().toUpperCase();
-  const campus=String(b.Campus_Name||'').trim().toUpperCase();
-  const rows=(state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date && (!b.Branch_ID || String(a.Branch_ID||b.Branch_ID)===String(b.Branch_ID)) && String(a.Batch_ID||'').toUpperCase()===String(b.Batch_ID||'').toUpperCase());
-  const unique={}; rows.forEach(r=>{const u=String(r.UIN||'').trim().toUpperCase();if(u)unique[u]=r.Attendance_Status;});
-  const marked=Object.keys(unique).length;
-  return {eligible,marked,status:eligible>0&&marked>=eligible?'Completed':marked>0?'In Progress':'Not Started'};
+  const batchId=String(b.Batch_ID||'').trim();
+  const batchCode=String(b.Batch_Code||'').trim().toUpperCase();
+  const date=state.date;
+  const studentUins=new Set();
+
+  // Build the live eligible roster from current allocations/student master so
+  // status is based on actual students, not only Batch Expected Strength.
+  (state.data.allocations||[]).forEach(a=>{
+    if(String(a.Allocation_Status||'Active')!=='Active') return;
+    if(String(a.Batch_ID||'').trim()===batchId){
+      const u=String(a.UIN||'').trim().toUpperCase();
+      if(u) studentUins.add(u);
+    }
+  });
+  (state.data.students||[]).forEach(s=>{
+    const status=String(s.Overall_Status||'Active').trim().toLowerCase();
+    if(['left','inactive','withdrawn','cancelled'].includes(status)) return;
+    const sb=String(s.Batch_ID||'').trim();
+    const sc=String(s.Batch_Code||s.Batch||s.Batch_Name||'').trim().toUpperCase();
+    if((batchId && sb===batchId) || (batchCode && sc===batchCode)){
+      const u=String(s.UIN||'').trim().toUpperCase();
+      if(u) studentUins.add(u);
+    }
+  });
+
+  const fallbackEligible=Number(b.Expected_Strength||0);
+  const eligible=studentUins.size||fallbackEligible;
+  const rows=(state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===date);
+  const unique={};
+  rows.forEach(r=>{
+    const u=String(r.UIN||'').trim().toUpperCase();
+    if(!u) return;
+    const sameBatch=String(r.Batch_ID||'').trim()===batchId || (!String(r.Batch_ID||'').trim() && studentUins.has(u));
+    if(sameBatch && (!studentUins.size || studentUins.has(u))) unique[u]=String(r.Attendance_Status||'').trim();
+  });
+
+  const markedStatuses=new Set(['Present','Absent','Leave','Sick']);
+  const marked=Object.values(unique).filter(st=>markedStatuses.has(st)).length;
+  const status=eligible>0&&marked>=eligible?'Completed':marked>0?'In Progress':'Not Started';
+  return {eligible,marked,status};
 }
 
 function sourceAttendanceStudents_(b){
@@ -897,10 +942,14 @@ function saveRosterAttendance(batchId){
   if(typeof google!=='undefined'&&google.script&&google.script.run){
     showToast('Saving attendance…');
     google.script.run.withSuccessHandler(res=>{
+      // The Cloudflare bridge applies res.data before invoking this handler.
+      // Re-render the attendance page immediately from that authoritative snapshot
+      // so the batch status changes without waiting for the 20-minute background sync.
+      if(res&&res.data&&typeof window.__applyERPApiSnapshot==='function') window.__applyERPApiSnapshot(res.data);
+      state.data.dashboardSnapshot=null;
+      render();
       showToast(`${res.saved||0} attendance records saved`);
-      loadData();
-      setTimeout(()=>openAttendance(batchId),450);
-      setTimeout(()=>refreshDashboardSnapshot(true),700);
+      setTimeout(()=>openAttendance(batchId),150);
     }).withFailureHandler(err=>showToast('Save failed: '+(err.message||err))).saveAttendance(state.session.token,{date:state.date,batchId:b?.Batch_ID||batchId,rows,markedBy:'Campus/Location Incharge'});
   }else{
     const existing=state.data.attendance||[];
