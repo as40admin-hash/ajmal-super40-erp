@@ -194,7 +194,17 @@ function renderNav(){
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
   nav.innerHTML=NAV_GROUPS.map(group=>{const items=group.items.filter(roleAllowedPage);if(!items.length)return '';return `<div class="nav-group"><div class="nav-group-title">${escapeHtml(group.title)}</div>${items.map(id=>{const [key,icon,label]=byId[id]; return `<button class="nav-item ${state.page===id?'active':''}" onclick="go('${id}')"><span class="nav-icon">${icon}</span><span class="nav-label">${label}</span>${id==='uinimport'?'<span class="nav-lock">🔒</span>':''}</button>`}).join('')}</div>`}).join('');
 }
-function go(page){ if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;} if(page==='uinimport' && !requireImportAccess()) return; if(page==='settings'){state._settingsUsersRequested=false;state._facultySettingsLoaded=false;state._facultySettingsLoading=false;} state.page=page; renderNav(); render(); document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarBackdrop')?.classList.remove('show');}
+function go(page){
+  if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;}
+  if(page==='uinimport' && !requireImportAccess()) return;
+  if(page==='settings'){state._settingsUsersRequested=false;state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
+  state.page=page;
+  renderNav();
+  render();
+  if(page==='dashboard') setTimeout(()=>refreshDashboardSnapshot(true),0);
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop')?.classList.remove('show');
+}
 function toggleSidebar(){const side=document.getElementById('sidebar');const back=document.getElementById('sidebarBackdrop');side?.classList.toggle('open');back?.classList.toggle('show',!!side?.classList.contains('open'));}
 function toggleTheme(){state.theme=state.theme==='dark'?'light':'dark';localStorage.setItem('erp-theme',state.theme);document.documentElement.dataset.theme=state.theme}
 function refreshDashboardSnapshot(renderAfter=true){
@@ -264,6 +274,7 @@ function syncERPData(opts={}){
         updateAccountUI();
         renderNav();
         render();
+        if(state.page==='dashboard') setTimeout(()=>refreshDashboardSnapshot(true),0);
 
         // Settings has two secondary panels whose data is loaded by separate
         // server calls. Refresh them whenever the authoritative state changes
@@ -517,8 +528,13 @@ function campusAttendanceTable(){
     const batches=state.data.batches||[], batchById={}; batches.forEach(b=>batchById[String(b.Batch_ID||'')]=b);
     const students=state.data.students||[], allocations=state.data.allocations||[]; const allocByUin={};
     allocations.forEach(a=>{if(String(a.Allocation_Status||'Active')!=='Active')return; allocByUin[String(a.UIN||'').trim().toUpperCase()]=a;});
-    const attByUin={}; (state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date).forEach(a=>{attByUin[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status;});
-    const m={}; students.forEach(st=>{const u=String(st.UIN||'').trim().toUpperCase(); const a=allocByUin[u]; const b=a?batchById[String(a.Batch_ID||'')]:null; if(!b)return; const br=String(st.Branch_ID||b.Branch_ID||a.Branch_ID||'BR001'); if(!isSuperAdmin() && String(state.session.user?.Branch_ID||'')!==br)return; const campus=String(a.Campus_Name||b.Campus_Name||st.Campus_Name||'Unassigned'); const key=br+'|'+campus; if(!m[key])m[key]={Branch_ID:br,Branch_Name:branchMap[br]||b.Branch_Name||st.Branch_Name||'Branch',Campus_Name:campus,eligible:0,present:0,absent:0,sick:0,leave:0,notMarked:0}; m[key].eligible++; const stt=attByUin[u]||'Not Marked'; if(stt==='Present')m[key].present++; else if(stt==='Absent')m[key].absent++; else if(stt==='Sick')m[key].sick++; else if(stt==='Leave')m[key].leave++; else m[key].notMarked++;}); rows=Object.values(m);
+    const attByBatchUin={}; const attByUin={};
+    (state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date).forEach(a=>{
+      const u=String(a.UIN||'').trim().toUpperCase(); if(!u)return;
+      const bid=String(a.Batch_ID||'').trim(); if(bid) attByBatchUin[bid+'|'+u]=a.Attendance_Status;
+      attByUin[u]=a.Attendance_Status;
+    });
+    const m={}; students.forEach(st=>{const u=String(st.UIN||'').trim().toUpperCase(); const a=allocByUin[u]; const b=a?batchById[String(a.Batch_ID||'')]:null; if(!b)return; const br=String(st.Branch_ID||b.Branch_ID||a.Branch_ID||'BR001'); if(!isSuperAdmin() && String(state.session.user?.Branch_ID||'')!==br)return; const campus=String(a.Campus_Name||b.Campus_Name||st.Campus_Name||'Unassigned'); const key=br+'|'+campus; if(!m[key])m[key]={Branch_ID:br,Branch_Name:branchMap[br]||b.Branch_Name||st.Branch_Name||'Branch',Campus_Name:campus,eligible:0,present:0,absent:0,sick:0,leave:0,notMarked:0}; m[key].eligible++; const stt=(a&&attByBatchUin[String(a.Batch_ID||'')+'|'+u]) || (b&&attByBatchUin[String(b.Batch_ID||'')+'|'+u]) || attByUin[u] || 'Not Marked'; if(stt==='Present')m[key].present++; else if(stt==='Absent')m[key].absent++; else if(stt==='Sick')m[key].sick++; else if(stt==='Leave')m[key].leave++; else m[key].notMarked++;}); rows=Object.values(m);
   }
   if(!rows.length) return '<div class="empty-state">No campus attendance data available for today.</div>';
   rows.sort((a,b)=>String(a.Branch_Name||'').localeCompare(String(b.Branch_Name||''))||String(a.Campus_Name||'').localeCompare(String(b.Campus_Name||'')));
@@ -954,7 +970,7 @@ function saveRosterAttendance(batchId){
   }else{
     const existing=state.data.attendance||[];
     const keep=existing.filter(a=>!(String(a.Attendance_Date||'').slice(0,10)===state.date && String(a.Batch_ID||'')===String(batchId)));
-    rows.filter(r=>r.status && r.status!=='Not Marked').forEach(r=>keep.push({Attendance_ID:`${state.date}|${String(r.uin).trim().toUpperCase()}`,Attendance_Date:state.date,UIN:String(r.uin).trim().toUpperCase(),Batch_ID:r.batchId,Campus_ID:r.campusId,Attendance_Status:r.status,Branch_ID:r.branchId,Marked_At:new Date().toISOString(),Marked_By:state.session.user?.User_ID||'local'}));
+    rows.filter(r=>r.status && r.status!=='Not Marked').forEach(r=>keep.push({Attendance_ID:`${state.date}|${String(r.batchId||batchId)}|${String(r.uin).trim().toUpperCase()}`,Attendance_Date:state.date,UIN:String(r.uin).trim().toUpperCase(),Batch_ID:r.batchId,Campus_ID:r.campusId,Attendance_Status:r.status,Branch_ID:r.branchId,Marked_At:new Date().toISOString(),Marked_By:state.session.user?.User_ID||'local'}));
     state.data.attendance=keep; state.data.dashboardSnapshot=null; showToast('Attendance saved locally'); render();
   }
 }
