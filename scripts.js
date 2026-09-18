@@ -375,7 +375,7 @@ function render(){
   document.getElementById('pageTitle').textContent = meta ? meta[2] : 'Dashboard';
   document.getElementById('pageSubtitle').textContent = state.page==='dashboard'?'Operations control centre' : (state.page==='faculty'?'Academic Administration':'Student Operations ERP');
   const c=document.getElementById('content');
-  if(state.page==='dashboard'){ c.innerHTML=dashboardHTML(); setTimeout(()=>refreshDashboardSnapshot(false),0); startDashboardLiveRefresh(); }
+  if(state.page==='dashboard'){ c.innerHTML=dashboardHTML(); setTimeout(()=>refreshDashboardSnapshot(true),0); startDashboardLiveRefresh(); }
   else if(state.page==='attendance') c.innerHTML=state.attendanceMode==='faculty'?facultyAttendanceHTML():attendanceHTML();
   else if(state.page==='students' || state.page==='uinimport') c.innerHTML=studentsHTML();
   else if(state.page==='movements') c.innerHTML=movementsHTML();
@@ -842,7 +842,7 @@ function saveFacultyAttendance(silent=false){
   if(!rows.length){if(!silent)showToast('Select at least one subject arrival status to save.');return;}
   if(isGAS()){
     if(!silent)showToast('Saving faculty attendance…');
-    google.script.run.withSuccessHandler(res=>{state.facultyLastSavedAt=res.savedAt||new Date().toISOString();const stamp=document.getElementById('facultyAttendanceSaveStamp');if(stamp)stamp.textContent='Last save: '+formatDateTime_(state.facultyLastSavedAt);if(!silent){showToast(`${res.saved||0} subject attendance records saved`);loadData();refreshDashboardSnapshot(false);setTimeout(loadFacultyAttendanceOptions,300);}}).withFailureHandler(err=>{if(!silent)showToast(err.message||'Could not save faculty attendance');}).saveFacultyAttendance(state.session.token,{date:state.date,batchId,subjectRows:rows,branchId:facultyBranch()});
+    google.script.run.withSuccessHandler(res=>{state.facultyLastSavedAt=res.savedAt||new Date().toISOString();const stamp=document.getElementById('facultyAttendanceSaveStamp');if(stamp)stamp.textContent='Last save: '+formatDateTime_(state.facultyLastSavedAt);if(!silent){showToast(`${res.saved||0} subject attendance records saved`);loadData();refreshDashboardSnapshot(true);setTimeout(loadFacultyAttendanceOptions,300);}}).withFailureHandler(err=>{if(!silent)showToast(err.message||'Could not save faculty attendance');}).saveFacultyAttendance(state.session.token,{date:state.date,batchId,subjectRows:rows,branchId:facultyBranch()});
   } else {
     let keep=[...(state.facultyAttendance||[])]; const savedAt=new Date().toISOString();
     rows.forEach(r=>{const key=`${r.attendanceDate}|${r.branchId}|${r.batchId}|${r.facultyId}|${r.subjectName}`;const i=keep.findIndex(a=>String(a.Attendance_ID||'')===key);const rec={Attendance_ID:key,Attendance_Date:r.attendanceDate,Branch_ID:r.branchId,Batch_ID:r.batchId,Faculty_ID:r.facultyId,Subject_Name:r.subjectName,Attendance_Status:r.status,Remarks:r.remarks,Marked_By:state.session.user?.User_ID||'local',Marked_At:(i>=0?keep[i].Marked_At:savedAt),Updated_By:state.session.user?.User_ID||'local',Updated_At:savedAt};if(i>=0)keep[i]=rec;else keep.push(rec);});
@@ -976,7 +976,7 @@ function saveRosterAttendance(batchId){
       if(res&&res.data&&typeof window.__applyERPApiSnapshot==='function') window.__applyERPApiSnapshot(res.data);
       state.data.dashboardSnapshot=null;
       render();
-      refreshDashboardSnapshot(false);
+      refreshDashboardSnapshot(true);
       showToast(`${res.saved||0} attendance records saved`);
       setTimeout(()=>openAttendance(batchId),150);
     }).withFailureHandler(err=>showToast('Save failed: '+(err.message||err))).saveAttendance(state.session.token,{date:state.date,batchId:b?.Batch_ID||batchId,rows,markedBy:'Campus/Location Incharge'});
