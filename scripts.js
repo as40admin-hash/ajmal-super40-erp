@@ -122,12 +122,14 @@ const NAV = [
   ['batches','▦','Batch / Campus Matrix'],
   ['reports','▤','Reports'],
   ['results','📊','Students Result Report'],
+  ['faculty','👥','Faculty / Teacher Master & Assignments'],
   ['settings','⚙','Settings'],
 ];
 const NAV_GROUPS = [
   {title:'Workspace',items:['dashboard']},
   {title:'Student Operations',items:['attendance','students','uinimport','movements','calendar','batches']},
   {title:'Insights & Reports',items:['reports','results']},
+  {title:'Academic Administration',items:['faculty']},
   {title:'Administration',items:['settings']}
 ];
 
@@ -194,17 +196,7 @@ function renderNav(){
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
   nav.innerHTML=NAV_GROUPS.map(group=>{const items=group.items.filter(roleAllowedPage);if(!items.length)return '';return `<div class="nav-group"><div class="nav-group-title">${escapeHtml(group.title)}</div>${items.map(id=>{const [key,icon,label]=byId[id]; return `<button class="nav-item ${state.page===id?'active':''}" onclick="go('${id}')"><span class="nav-icon">${icon}</span><span class="nav-label">${label}</span>${id==='uinimport'?'<span class="nav-lock">🔒</span>':''}</button>`}).join('')}</div>`}).join('');
 }
-function go(page){
-  if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;}
-  if(page==='uinimport' && !requireImportAccess()) return;
-  if(page==='settings'){state._settingsUsersRequested=false;state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
-  state.page=page;
-  renderNav();
-  render();
-  if(page==='dashboard') setTimeout(()=>refreshDashboardSnapshot(true),0);
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebarBackdrop')?.classList.remove('show');
-}
+function go(page){ if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;} if(page==='uinimport' && !requireImportAccess()) return; if(page==='settings'){state._settingsUsersRequested=false;} if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;} state.page=page; renderNav(); render(); document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarBackdrop')?.classList.remove('show');}
 function toggleSidebar(){const side=document.getElementById('sidebar');const back=document.getElementById('sidebarBackdrop');side?.classList.toggle('open');back?.classList.toggle('show',!!side?.classList.contains('open'));}
 function toggleTheme(){state.theme=state.theme==='dark'?'light':'dark';localStorage.setItem('erp-theme',state.theme);document.documentElement.dataset.theme=state.theme}
 function refreshDashboardSnapshot(renderAfter=true){
@@ -274,15 +266,14 @@ function syncERPData(opts={}){
         updateAccountUI();
         renderNav();
         render();
-        if(state.page==='dashboard') setTimeout(()=>refreshDashboardSnapshot(true),0);
 
         // Settings has two secondary panels whose data is loaded by separate
         // server calls. Refresh them whenever the authoritative state changes
         // so direct Spreadsheet edits are reflected there as well.
         if(state.page==='settings'){
-          if(isSuperAdmin()) setTimeout(()=>loadUsers(),0);
-          if(canManageFacultyMaster()) setTimeout(()=>loadFacultyAdminData(true),80);
+          if(isActualSuperAdmin()) setTimeout(()=>loadUsers(),0);
         }
+        if(state.page==='faculty' && canManageFacultyMaster()) setTimeout(()=>loadFacultyAdminData(true),80);
 
         if(afterSync) afterSync(state.data);
         resolve(state.data);
@@ -323,9 +314,9 @@ function applyAuthoritativeImportSnapshot_(res, targetPage, afterSync){
   renderNav();
   render();
   if(state.page==='settings'){
-    if(isSuperAdmin()) setTimeout(()=>loadUsers(),0);
-    if(canManageFacultyMaster()) setTimeout(()=>loadFacultyAdminData(true),80);
+    if(isActualSuperAdmin()) setTimeout(()=>loadUsers(),0);
   }
+  if(state.page==='faculty' && canManageFacultyMaster()) setTimeout(()=>loadFacultyAdminData(true),80);
   if(typeof afterSync==='function') afterSync(state.data);
   return true;
 }
@@ -370,7 +361,7 @@ function startERPAutoSync(){
 function render(){
   const meta = NAV.find(x=>x[0]===state.page);
   document.getElementById('pageTitle').textContent = meta ? meta[2] : 'Dashboard';
-  document.getElementById('pageSubtitle').textContent = state.page==='dashboard'?'Operations control centre': 'Student Operations ERP';
+  document.getElementById('pageSubtitle').textContent = state.page==='dashboard'?'Operations control centre' : (state.page==='faculty'?'Academic Administration':'Student Operations ERP');
   const c=document.getElementById('content');
   if(state.page==='dashboard') c.innerHTML=dashboardHTML();
   else if(state.page==='attendance') c.innerHTML=state.attendanceMode==='faculty'?facultyAttendanceHTML():attendanceHTML();
@@ -380,11 +371,12 @@ function render(){
   else if(state.page==='batches') c.innerHTML=batchesHTML();
   else if(state.page==='reports') c.innerHTML=reportsHTML();
   else if(state.page==='results') { c.innerHTML=resultsHTML(); setTimeout(loadResultOptions,0); }
+  else if(state.page==='faculty') { c.innerHTML=`<div id="facultyAdminSection">${facultyAdminHtml()}</div>`; if(canManageFacultyMaster() && !state._facultySettingsLoaded && !state._facultySettingsLoading){ state._facultySettingsLoading=true; setTimeout(()=>loadFacultyAdminData(),120); } }
   else {
     if(state.page==='settings' && document.getElementById('settingsPageRoot')){
       // Keep the mounted Settings DOM stable during background refreshes; update sub-panels in place.
     } else { c.innerHTML=settingsHTML(); }
-    if(state.page==='settings'){ const r=String(state.session.user?.Role||''); if(isSuperAdmin() && !state._settingsUsersRequested){ state._settingsUsersRequested=true; setTimeout(loadUsers,0); } if(canManageFacultyMaster() && !state._facultySettingsLoaded && !state._facultySettingsLoading){ state._facultySettingsLoading=true; setTimeout(()=>loadFacultyAdminData(),120); } }
+    if(state.page==='settings'){ if(isActualSuperAdmin() && !state._settingsUsersRequested){ state._settingsUsersRequested=true; setTimeout(loadUsers,0); } }
   }
 }
 
@@ -528,13 +520,8 @@ function campusAttendanceTable(){
     const batches=state.data.batches||[], batchById={}; batches.forEach(b=>batchById[String(b.Batch_ID||'')]=b);
     const students=state.data.students||[], allocations=state.data.allocations||[]; const allocByUin={};
     allocations.forEach(a=>{if(String(a.Allocation_Status||'Active')!=='Active')return; allocByUin[String(a.UIN||'').trim().toUpperCase()]=a;});
-    const attByBatchUin={}; const attByUin={};
-    (state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date).forEach(a=>{
-      const u=String(a.UIN||'').trim().toUpperCase(); if(!u)return;
-      const bid=String(a.Batch_ID||'').trim(); if(bid) attByBatchUin[bid+'|'+u]=a.Attendance_Status;
-      attByUin[u]=a.Attendance_Status;
-    });
-    const m={}; students.forEach(st=>{const u=String(st.UIN||'').trim().toUpperCase(); const a=allocByUin[u]; const b=a?batchById[String(a.Batch_ID||'')]:null; if(!b)return; const br=String(st.Branch_ID||b.Branch_ID||a.Branch_ID||'BR001'); if(!isSuperAdmin() && String(state.session.user?.Branch_ID||'')!==br)return; const campus=String(a.Campus_Name||b.Campus_Name||st.Campus_Name||'Unassigned'); const key=br+'|'+campus; if(!m[key])m[key]={Branch_ID:br,Branch_Name:branchMap[br]||b.Branch_Name||st.Branch_Name||'Branch',Campus_Name:campus,eligible:0,present:0,absent:0,sick:0,leave:0,notMarked:0}; m[key].eligible++; const stt=(a&&attByBatchUin[String(a.Batch_ID||'')+'|'+u]) || (b&&attByBatchUin[String(b.Batch_ID||'')+'|'+u]) || attByUin[u] || 'Not Marked'; if(stt==='Present')m[key].present++; else if(stt==='Absent')m[key].absent++; else if(stt==='Sick')m[key].sick++; else if(stt==='Leave')m[key].leave++; else m[key].notMarked++;}); rows=Object.values(m);
+    const attByUin={}; (state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date).forEach(a=>{attByUin[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status;});
+    const m={}; students.forEach(st=>{const u=String(st.UIN||'').trim().toUpperCase(); const a=allocByUin[u]; const b=a?batchById[String(a.Batch_ID||'')]:null; if(!b)return; const br=String(st.Branch_ID||b.Branch_ID||a.Branch_ID||'BR001'); if(!isSuperAdmin() && String(state.session.user?.Branch_ID||'')!==br)return; const campus=String(a.Campus_Name||b.Campus_Name||st.Campus_Name||'Unassigned'); const key=br+'|'+campus; if(!m[key])m[key]={Branch_ID:br,Branch_Name:branchMap[br]||b.Branch_Name||st.Branch_Name||'Branch',Campus_Name:campus,eligible:0,present:0,absent:0,sick:0,leave:0,notMarked:0}; m[key].eligible++; const stt=attByUin[u]||'Not Marked'; if(stt==='Present')m[key].present++; else if(stt==='Absent')m[key].absent++; else if(stt==='Sick')m[key].sick++; else if(stt==='Leave')m[key].leave++; else m[key].notMarked++;}); rows=Object.values(m);
   }
   if(!rows.length) return '<div class="empty-state">No campus attendance data available for today.</div>';
   rows.sort((a,b)=>String(a.Branch_Name||'').localeCompare(String(b.Branch_Name||''))||String(a.Campus_Name||'').localeCompare(String(b.Campus_Name||'')));
@@ -607,7 +594,8 @@ function onAdminUserRoleOrBranchChanged(){
 }
 function handleAdminBranchChanged(){ onAdminUserRoleOrBranchChanged(); }
 function isSuperAdmin(){return String(state.session.user?.Role||'')==='Super Admin'||(String(state.session.user?.Role||'')==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL');}
-function canManageFacultyMaster(){const r=String(state.session.user?.Role||'');return r==='Super Admin'||r==='Academic Admin'||(r==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL');}
+function isActualSuperAdmin(){return String(state.session.user?.Role||'')==='Super Admin';}
+function canManageFacultyMaster(){const r=String(state.session.user?.Role||'');return r==='Super Admin'||r==='Academic Admin'||r==='Admin';}
 function effectiveUiBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function classFromBatch_(b){return String(b.Class_Name||b.Class||deriveClassFromCategory_(b.Category_Name||b.Category||'')).trim();}
 function deriveClassFromCategory_(cat){const c=String(cat||'').toLowerCase(); if(c.includes('challenger')) return 'Challengers'; if(c.includes('xii')) return 'XII'; if(c.includes('xi')) return 'XI'; return ''; }
@@ -644,7 +632,7 @@ function facultyAllowed(){return ['Super Admin','Admin','Campus Admin','Attendan
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return !(isSuperAdmin()||r==='Campus Admin');}
 function attendanceOperatorUser(){return String(state.session.user?.Role||'')==='Attendance Operator';}
 function assignedCampusName_(){return String(state.session.user?.Campus_Name||'').trim();}
-function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:true,attendance:['Campus Admin','Attendance Operator'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Campus Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Result Operator','Academic Admin'].includes(r),settings:['Academic Admin','Campus Admin'].includes(r)}; return map[page]||false;}
+function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return page==='settings'||page==='faculty'||true; const map={dashboard:true,attendance:['Campus Admin','Attendance Operator'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Campus Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
 function facultyBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function facultyBatches(){
   const branch=facultyBranch();
@@ -970,7 +958,7 @@ function saveRosterAttendance(batchId){
   }else{
     const existing=state.data.attendance||[];
     const keep=existing.filter(a=>!(String(a.Attendance_Date||'').slice(0,10)===state.date && String(a.Batch_ID||'')===String(batchId)));
-    rows.filter(r=>r.status && r.status!=='Not Marked').forEach(r=>keep.push({Attendance_ID:`${state.date}|${String(r.batchId||batchId)}|${String(r.uin).trim().toUpperCase()}`,Attendance_Date:state.date,UIN:String(r.uin).trim().toUpperCase(),Batch_ID:r.batchId,Campus_ID:r.campusId,Attendance_Status:r.status,Branch_ID:r.branchId,Marked_At:new Date().toISOString(),Marked_By:state.session.user?.User_ID||'local'}));
+    rows.filter(r=>r.status && r.status!=='Not Marked').forEach(r=>keep.push({Attendance_ID:`${state.date}|${String(r.uin).trim().toUpperCase()}`,Attendance_Date:state.date,UIN:String(r.uin).trim().toUpperCase(),Batch_ID:r.batchId,Campus_ID:r.campusId,Attendance_Status:r.status,Branch_ID:r.branchId,Marked_At:new Date().toISOString(),Marked_By:state.session.user?.User_ID||'local'}));
     state.data.attendance=keep; state.data.dashboardSnapshot=null; showToast('Attendance saved locally'); render();
   }
 }
@@ -1427,7 +1415,7 @@ function facultyAdminHtml(){
     batches:String(f.Batch_Batches||f['Batch/Batches']||f.Batches||f.Batch||'').trim()
   }));
   state._localFacultyEditRows=rows.map(r=>({Faculty_ID:r.f.Faculty_ID||'',Faculty_Name:r.f.Faculty_Name||'',Initials:r.f.Initials||'',Branch_ID:r.f.Branch_ID||'',Branch_Name:r.branches,Contact_Number:r.f.Contact_Number||'',Status:r.f.Status||'Active',subjects:r.subjects?String(r.subjects).split(/\s*[,;|]\s*/).filter(Boolean):[],campuses:r.campuses?String(r.campuses).split(/\s*[,;|]\s*/).filter(Boolean):[],classes:r.classes?String(r.classes).split(/\s*[,;|]\s*/).filter(Boolean):[],batches:r.batches?String(r.batches).split(/\s*[,;|]\s*/).filter(Boolean):[]}));
-  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2 style="font-size:16px;margin:0">Faculty / Teacher Master & Assignments</h2><div class="muted">Faculty master is managed from the imported CSV/Excel source and mapped to Branch → Campus → Class → Batch → Subject.</div></div><span class="badge badge-red">${String(state.session.user?.Role||'')==='Super Admin'?'SUPER ADMIN':'ACADEMIC ADMIN'}</span></div>
+  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2 style="font-size:16px;margin:0">Faculty / Teacher Master & Assignments</h2><div class="muted">Faculty master is managed from the imported CSV/Excel source and mapped to Branch → Campus → Class → Batch → Subject.</div></div><span class="badge badge-red">${String(state.session.user?.Role||'')==='Super Admin'?'SUPER ADMIN':(String(state.session.user?.Role||'')==='Admin'?'ADMIN':'ACADEMIC ADMIN')}</span></div>
   <div class="card-soft" style="margin-top:12px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Import Faculty / Teacher Master</h3><div class="muted small">Use the standard template. Accepted: CSV, XLSX, XLS. The uploaded CSV/Excel file is the source of truth for this faculty list.</div></div></div><div class="grid grid-3" style="margin-top:10px"><div><label class="small muted">Source file</label><input id="facultyMasterFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleFacultyMasterFile(this)"></div><div><label class="small muted">Source link (optional)</label><input id="facultyMasterSourceUrl" type="url" class="input" placeholder="Public CSV / Google Sheets published CSV link"></div><div class="toolbar" style="align-items:end"><button class="btn btn-secondary" onclick="facultyMasterTemplate()">Download Standard Template</button><button class="btn btn-primary" onclick="importFacultyFromSourceUrl()">Import from Link</button></div></div><div id="facultyMasterImportPreview" style="margin-top:10px"></div></div>
   <div class="toolbar" style="margin-top:12px;justify-content:space-between"><span class="muted small">${rows.length} faculty master records • ${aopts.length} active assignments</span><button class="btn btn-secondary" onclick="loadFacultyAdminData(true)">↻ Refresh Faculty List</button></div>
   <div class="table-wrap" style="margin-top:12px"><table class="data-table"><thead><tr><th>Faculty Name</th><th>Initials / Abbreviation</th><th>Subject</th><th>Branch</th><th>Campus</th><th>Class</th><th>Batch / Batches</th><th>Contact Number</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.length?rows.map((r,i)=>`<tr><td><b>${escapeHtml(r.f.Faculty_Name||'')}</b><div class="muted small">${escapeHtml(r.f.Faculty_ID||'')}</div></td><td>${escapeHtml(r.f.Initials||'')}</td><td>${escapeHtml(r.subjects.join(', ')||'—')}</td><td>${escapeHtml(r.branches||'—')}</td><td>${escapeHtml(r.campuses||'—')}</td><td>${escapeHtml(r.classes||'—')}</td><td>${escapeHtml(r.batches||'—')}</td><td>${escapeHtml(r.f.Contact_Number||'—')}</td><td><span class="badge ${String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'badge-red':'badge-green'}">${escapeHtml(r.f.Status|| (String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'Inactive':'Active'))}</span></td><td><button class="btn btn-secondary btn-sm" onclick="openLocalFacultyEdit(${i})">Edit</button></td></tr>`).join(''):`<tr><td colspan="10" class="muted center">No faculty master data imported yet. Use the standard CSV/Excel template above.</td></tr>`}</tbody></table></div></div>`;
@@ -1503,7 +1491,7 @@ function saveEditedFacultyMaster(){
   };
   const refreshFacultySectionOnly=()=>{
     const host=document.getElementById('facultyAdminSection');
-    if(!host || state.page!=='settings') return;
+    if(!host || state.page!=='faculty') return;
     try { host.innerHTML=facultyAdminHtml(); }
     catch(err){ console.error('Faculty display refresh error',err); }
   };
@@ -1540,7 +1528,7 @@ function loadFacultyAdminData(force=false){
     state.facultyOptions=o||state.facultyOptions||{faculties:[],assignments:[],subjects:[]};
     state._facultySettingsLoaded=true;
     state._facultySettingsLoading=false;
-    if(state.page!=='settings') return;
+    if(state.page!=='settings' && state.page!=='faculty') return;
     const host=document.getElementById('facultyAdminSection');
     if(!host) return;
     try {
@@ -1603,7 +1591,7 @@ function confirmFacultyMasterImport() {
         state._facultySettingsLoaded = false;
         state._facultySettingsLoading = false;
 
-        syncAfterImport_(res, 'settings', () => {
+        syncAfterImport_(res, 'faculty', () => {
           loadFacultyAdminData(true);
 
           showToast(
@@ -1660,7 +1648,7 @@ function importFacultyFromSourceUrl() {
         state._facultySettingsLoaded = false;
         state._facultySettingsLoading = false;
 
-        refreshERPDataAndRender('settings', () => {
+        refreshERPDataAndRender('faculty', () => {
           loadFacultyAdminData(true);
           showToast(
             `Faculty link import synchronized • ${Number(res.inserted || 0)} faculty • ` +
@@ -1685,35 +1673,36 @@ function importFacultyFromSourceUrl() {
 
 function saveSubjectMaster(){
   const name=document.getElementById('subjectNameInput')?.value.trim(); if(!name){showToast('Subject name is required.');return;}
-  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('settings',()=>{loadFacultyAttendanceOptions();showToast('Subject saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save subject')).adminSaveSubject(state.session.token,{Subject_Name:name,Active_Flag:true});
+  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('faculty',()=>{loadFacultyAttendanceOptions();showToast('Subject saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save subject')).adminSaveSubject(state.session.token,{Subject_Name:name,Active_Flag:true});
   else {state.facultyOptions.subjects=state.facultyOptions.subjects||[]; if(!state.facultyOptions.subjects.some(x=>String(x.Subject_Name||'').toLowerCase()===name.toLowerCase())) state.facultyOptions.subjects.push({Subject_ID:'SUB-'+Date.now(),Subject_Name:name,Active_Flag:'TRUE'});showToast('Subject saved locally');render();}
 }
 
 function saveFacultyMaster(){
   const payload={Faculty_ID:document.getElementById('facultyIdInput')?.value.trim(),Faculty_Name:document.getElementById('facultyNameInput')?.value.trim(),Branch_ID:document.getElementById('facultyBranchInput')?.value,Status:document.getElementById('facultyStatusInput')?.value};
   if(!payload.Faculty_ID||!payload.Faculty_Name){showToast('Faculty ID and name are required.');return;}
-  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('settings',()=>{loadFacultyAttendanceOptions();showToast('Faculty saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save faculty')).adminSaveFaculty(state.session.token,payload); else {state.facultyOptions.faculties=state.facultyOptions.faculties||[];const i=state.facultyOptions.faculties.findIndex(f=>String(f.Faculty_ID)===payload.Faculty_ID);if(i>=0)state.facultyOptions.faculties[i]=payload;else state.facultyOptions.faculties.push(payload);showToast('Faculty saved locally');render();}
+  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('faculty',()=>{loadFacultyAttendanceOptions();showToast('Faculty saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save faculty')).adminSaveFaculty(state.session.token,payload); else {state.facultyOptions.faculties=state.facultyOptions.faculties||[];const i=state.facultyOptions.faculties.findIndex(f=>String(f.Faculty_ID)===payload.Faculty_ID);if(i>=0)state.facultyOptions.faculties[i]=payload;else state.facultyOptions.faculties.push(payload);showToast('Faculty saved locally');render();}
 }
 function saveFacultyAssignment(){
   const payload={Faculty_ID:document.getElementById('facultyAssignFaculty')?.value,Batch_ID:document.getElementById('facultyAssignBatch')?.value,Subject_Name:document.getElementById('facultyAssignSubject')?.value};
   if(!payload.Faculty_ID||!payload.Batch_ID||!payload.Subject_Name){showToast('Select faculty, batch and subject.');return;}
-  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('settings',()=>{loadFacultyAttendanceOptions();showToast('Faculty assignment saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save assignment')).adminSaveFacultyAssignment(state.session.token,payload); else {const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===payload.Batch_ID);state.facultyOptions.assignments.push({...payload,Assignment_ID:String(Date.now()),Branch_ID:b?.Branch_ID||facultyBranch(),Branch_Name:b?.Branch_Name||'',Active_Flag:'TRUE'});showToast('Assignment saved locally');render();}
+  if(isGAS()) google.script.run.withSuccessHandler(res=>{refreshERPDataAndRender('faculty',()=>{loadFacultyAttendanceOptions();showToast('Faculty assignment saved and synchronized');},{silent:true,force:true});}).withFailureHandler(e=>showToast(e.message||'Could not save assignment')).adminSaveFacultyAssignment(state.session.token,payload); else {const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===payload.Batch_ID);state.facultyOptions.assignments.push({...payload,Assignment_ID:String(Date.now()),Branch_ID:b?.Branch_ID||facultyBranch(),Branch_Name:b?.Branch_Name||'',Active_Flag:'TRUE'});showToast('Assignment saved locally');render();}
 }
 
 function settingsHTML(){
-  const isAdmin=isSuperAdmin(); const showBrandTheme=isSuperAdmin(); const showAttendanceDefaults=isSuperAdmin()||String(state.session.user?.Role||'')==='Campus Admin';
+  const isSA=isActualSuperAdmin();
+  const showAttendanceDefaults=isSA;
   return `<div class="grid grid-2">
-    ${showBrandTheme?`<div class="card"><h2 style="font-size:16px;margin-top:0">Brand Theme</h2><p class="muted small">AJMAL SUPER 40 brand palette is applied across the ERP. Light and dark mode are available from the top-right theme control.</p><div class="list"><div class="list-item"><span>Primary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-primary')}</b></div><div class="list-item"><span>Secondary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-secondary')}</b></div><div class="list-item"><span>Accent</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-accent')}</b></div></div></div>`:''}
-    ${showAttendanceDefaults?`    <div class="card"><h2 style="font-size:16px;margin-top:0">Attendance Defaults</h2><div class="grid grid-2"><div><label class="small muted">Default start</label><input id="attendanceWindowStart" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_START')?.Value||'')}"></div><div><label class="small muted">Default end</label><input id="attendanceWindowEnd" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_END')?.Value||'')}"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-primary" onclick="saveAttendanceSettings()">Save Attendance Window</button></div><div class="list" style="margin-top:10px"><div class="list-item">Operator <b>Campus/Location Incharge</b></div><div class="list-item">Frequency <b>Once per day</b></div><div class="list-item">Holiday suppression <b>Automatic</b></div></div></div>`:''}
+    ${isSA?`<div class="card"><h2 style="font-size:16px;margin-top:0">Brand Theme</h2><p class="muted small">AJMAL SUPER 40 brand palette is applied across the ERP. Light and dark mode are available from the top-right theme control.</p><div class="list"><div class="list-item"><span>Primary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-primary')}</b></div><div class="list-item"><span>Secondary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-secondary')}</b></div><div class="list-item"><span>Accent</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-accent')}</b></div></div></div>`:''}
+    ${showAttendanceDefaults?`<div class="card"><h2 style="font-size:16px;margin-top:0">Attendance Defaults</h2><div class="grid grid-2"><div><label class="small muted">Default start</label><input id="attendanceWindowStart" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_START')?.Value||'')}"></div><div><label class="small muted">Default end</label><input id="attendanceWindowEnd" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_END')?.Value||'')}"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-primary" onclick="saveAttendanceSettings()">Save Attendance Window</button></div><div class="list" style="margin-top:10px"><div class="list-item">Operator <b>Campus/Location Incharge</b></div><div class="list-item">Frequency <b>Once per day</b></div><div class="list-item">Holiday suppression <b>Automatic</b></div></div></div>`:''}
   </div>
-  <div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2>User Access & Password Control</h2><div class="muted">Change your own password. Admins can reset passwords for other ERP users and maintain account access.</div></div><span class="badge ${isAdmin?'badge-green':'badge-blue'}">${isAdmin?'Administrator':'Authenticated User'}</span></div>
+  <div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2>User Access & Password Control</h2><div class="muted">Change your own password. Only Super Admin can manage other ERP users and the protected settings controls.</div></div><span class="badge ${isSA?'badge-green':'badge-blue'}">${isSA?'SUPER ADMIN':'AUTHENTICATED USER'}</span></div>
     <div class="grid grid-3">
       <div><label class="small muted">Current password</label><input id="currentPwd" class="input" type="password"></div>
       <div><label class="small muted">New password</label><input id="newPwd" class="input" type="password"></div>
       <div><label class="small muted">Confirm new password</label><input id="confirmPwd" class="input" type="password"></div>
     </div>
     <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" onclick="changeOwnPassword()">Change My Password</button></div>
-    ${isAdmin?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">Super Admin User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN ONLY</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>${(isSuperAdmin()||String(state.session.user?.Role||'')==='Academic Admin'||isAdmin)?`<div id="facultyAdminSection">${facultyAdminHtml()}</div>`:''}`
+    ${isSA?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">Super Admin User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN ONLY</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>`;
 }
 
 function saveAttendanceSettings(){
