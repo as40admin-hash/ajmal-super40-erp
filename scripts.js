@@ -9,7 +9,12 @@
   async function callApi(action, args) {
     const response = await fetch(API_PATH, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache'
+      },
       body: JSON.stringify({action, args})
     });
 
@@ -157,6 +162,13 @@ const NAV_GROUPS = [
   {title:'Academic Administration',items:['faculty']},
   {title:'Administration',items:['settings']}
 ];
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (!isGAS() || !state.session.token) return;
+  if (state.page === 'dashboard') refreshDashboardSnapshot(true);
+  if (state.page === 'attendance') syncERPData({silent:true, force:true, preserveInputs:true});
+});
 
 document.addEventListener('DOMContentLoaded', () => {
     document.documentElement.dataset.theme = state.theme === 'dark' ? 'dark' : 'light';
