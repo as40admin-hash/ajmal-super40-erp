@@ -541,14 +541,92 @@ function branchCategoryTotals(){
   });
   return {out,categoryOrder};
 }
+function attendanceEligibleUinsForBatch_(batchId, batchCode=''){
+  const ids=new Set();
+  const bid=String(batchId||'').trim();
+  const bcode=String(batchCode||'').trim().toUpperCase();
+
+  // Current active allocations are preferred.
+  (state.data.allocations||[]).forEach(a=>{
+    if(String(a.Allocation_Status||'Active').trim().toLowerCase()!=='active') return;
+    const ab=String(a.Batch_ID||'').trim();
+    const ac=String(a.Batch_Code||'').trim().toUpperCase();
+    if((bid && ab===bid) || (!bid && bcode && ac===bcode)){
+      const u=String(a.UIN||'').trim().toUpperCase();
+      if(u) ids.add(u);
+    }
+  });
+
+  // Student Master remains the fallback/source of truth for first-time setup.
+  (state.data.students||[]).forEach(st=>{
+    const overall=String(st.Overall_Status||'Active').trim().toLowerCase();
+    if(['left','inactive','withdrawn','cancelled'].includes(overall)) return;
+    const sb=String(st.Batch_ID||'').trim();
+    const sc=String(st.Batch_Code||st.Batch||st.Batch_Name||'').trim().toUpperCase();
+    if((bid && sb===bid) || (bcode && sc===bcode)){
+      const u=String(st.UIN||'').trim().toUpperCase();
+      if(u) ids.add(u);
+    }
+  });
+
+  return ids;
+}
+
 function attendanceCounts(){
-  if(state.data.dashboardSnapshot){
-    const rows=state.data.dashboardSnapshot.rows||[];
-    return {eligible:Number(state.data.dashboardSnapshot.totalEligible||0),Present:rows.reduce((n,r)=>n+Number(r.present||0),0),Absent:rows.reduce((n,r)=>n+Number(r.absent||0),0),Leave:rows.reduce((n,r)=>n+Number(r.leave||0),0),Sick:rows.reduce((n,r)=>n+Number(r.sick||0),0),Not_Marked:rows.reduce((n,r)=>n+Number(r.notMarked||0),0)};
-  }
-  const rows=(state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===state.date);
-  const c={Present:0,Absent:0,Leave:0,Sick:0,Not_Marked:0}; rows.forEach(r=>{if(c[r.Attendance_Status]!==undefined)c[r.Attendance_Status]++;});
-  const eligible=stats().total; const marked=c.Present+c.Absent+c.Leave+c.Sick; c.Not_Marked=Math.max(0,eligible-marked); return {eligible,...c};
+  // IMPORTANT:
+  // Daily Attendance is a filter-scoped view. dashboardSnapshot is an
+  // organisation-wide snapshot and must NOT be used for these cards.
+  const batches=scopedBatchesForAttendance();
+  const date=normalizeDateKey_(state.date);
+  const counts={Present:0,Absent:0,Leave:0,Sick:0,Not_Marked:0};
+  let eligible=0;
+
+  const attendanceRows=(state.data.attendance||[])
+    .filter(a=>normalizeDateKey_(a.Attendance_Date||'')===date);
+
+  batches.forEach(b=>{
+    const batchId=String(b.Batch_ID||'').trim();
+    const batchCode=String(b.Batch_Code||'').trim().toUpperCase();
+    const eligibleUins=attendanceEligibleUinsForBatch_(batchId,batchCode);
+    const batchEligible=eligibleUins.size || Number(b.Expected_Strength||b.batch_total||0);
+    eligible+=batchEligible;
+
+    const latestByUin={};
+
+    attendanceRows.forEach(r=>{
+      const u=String(r.UIN||'').trim().toUpperCase();
+      if(!u) return;
+
+      const rowBatchId=String(r.Batch_ID||'').trim();
+      const rowBatchCode=String(r.Batch_Code||'').trim().toUpperCase();
+      const sameBatch=
+        rowBatchId===batchId ||
+        (!rowBatchId && batchCode && rowBatchCode===batchCode);
+
+      if(!sameBatch) return;
+      if(eligibleUins.size && !eligibleUins.has(u)) return;
+
+      const stamp=Date.parse(String(r.Updated_At||r.Marked_At||'')) || 0;
+      const previous=latestByUin[u];
+      if(!previous || stamp>=previous.__stamp){
+        latestByUin[u]={
+          status:String(r.Attendance_Status||'').trim(),
+          __stamp:stamp
+        };
+      }
+    });
+
+    Object.values(latestByUin).forEach(r=>{
+      if(r.status==='Present') counts.Present++;
+      else if(r.status==='Absent') counts.Absent++;
+      else if(r.status==='Leave') counts.Leave++;
+      else if(r.status==='Sick') counts.Sick++;
+    });
+  });
+
+  const marked=counts.Present+counts.Absent+counts.Leave+counts.Sick;
+  counts.Not_Marked=Math.max(0,eligible-marked);
+  return {eligible,...counts};
 }
 
 function dashboardFacultyAttendanceHTML(){
@@ -1089,7 +1167,7 @@ function batchAttendanceSummary(b){
 
   const fallbackEligible=Number(b.Expected_Strength||0);
   const eligible=studentUins.size||fallbackEligible;
-  const rows=(state.data.attendance||[]).filter(a=>String(a.Attendance_Date||'').slice(0,10)===date);
+  const rows=(state.data.attendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===normalizeDateKey_(date));
   const unique={};
   rows.forEach(r=>{
     const u=String(r.UIN||'').trim().toUpperCase();
