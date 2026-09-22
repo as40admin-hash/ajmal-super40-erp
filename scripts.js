@@ -234,7 +234,26 @@ function renderNav(){
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
   nav.innerHTML=NAV_GROUPS.map(group=>{const items=group.items.filter(roleAllowedPage);if(!items.length)return '';return `<div class="nav-group"><div class="nav-group-title">${escapeHtml(group.title)}</div>${items.map(id=>{const [key,icon,label]=byId[id]; return `<button class="nav-item ${state.page===id?'active':''}" onclick="go('${id}')"><span class="nav-icon">${icon}</span><span class="nav-label">${label}</span>${id==='uinimport'?'<span class="nav-lock">🔒</span>':''}</button>`}).join('')}</div>`}).join('');
 }
-function go(page){ if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;} if(page==='uinimport' && !requireImportAccess()) return; if(page==='attendance'){state.openAttendanceBatchId='';state.attendanceDirty=false;}  if(page==='settings'){state._settingsUsersRequested=false;} if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;} state.page=page; renderNav(); render(); document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarBackdrop')?.classList.remove('show'); if(page==='attendance' && isGAS() && state.session.token){ setTimeout(()=>syncERPData({targetPage:'attendance',force:true,preserveInputs:false,silent:true}),0); }}
+function go(page){
+  if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;}
+  if(page==='uinimport' && !requireImportAccess()) return;
+  if(page==='attendance'){state.openAttendanceBatchId='';state.attendanceDirty=false;}
+  if(page==='settings'){state._settingsUsersRequested=false;}
+  if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
+  if(page==='dashboard'){
+    // Never reuse an older dashboard attendance snapshot when opening Dashboard.
+    state.data.dashboardSnapshot=null;
+    state._dashboardLastRefreshAt=0;
+  }
+  state.page=page;
+  renderNav();
+  render();
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarBackdrop')?.classList.remove('show');
+  if(page==='attendance' && isGAS() && state.session.token){
+    setTimeout(()=>syncERPData({targetPage:'attendance',force:true,preserveInputs:false,silent:true}),0);
+  }
+}
 function toggleSidebar(){const side=document.getElementById('sidebar');const back=document.getElementById('sidebarBackdrop');side?.classList.toggle('open');back?.classList.toggle('show',!!side?.classList.contains('open'));}
 function toggleTheme(){state.theme=state.theme==='dark'?'light':'dark';localStorage.setItem('erp-theme',state.theme);document.documentElement.dataset.theme=state.theme}
 function refreshDashboardSnapshot(renderAfter=true){
@@ -1055,6 +1074,10 @@ function saveFacultyAttendance(silent=false){
     google.script.run.withSuccessHandler(res=>{
       state._facultySaveInFlight=false;
       state.facultyAttendanceDirty=false;
+      // The Daily Attendance page receives the authoritative post-write snapshot.
+      // The Dashboard has its own snapshot, so explicitly invalidate it too.
+      state.data.dashboardSnapshot=null;
+      state._dashboardLastRefreshAt=0;
       state.facultyLastSavedAt=res.savedAt||new Date().toISOString();
       const stamp=document.getElementById('facultyAttendanceSaveStamp');
       if(stamp)stamp.textContent='Last save: '+formatDateTime_(state.facultyLastSavedAt);
@@ -1066,6 +1089,8 @@ function saveFacultyAttendance(silent=false){
 
       if(!silent){
         showToast(`${res.saved||0} subject attendance records saved`);
+        refreshDashboardSnapshot(true);
+      } else if(state.page==='dashboard'){
         refreshDashboardSnapshot(true);
       }
     }).withFailureHandler(err=>{
