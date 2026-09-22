@@ -68,7 +68,10 @@ async function handleApi_(request, env) {
     const upstream = await fetch(target, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache'
       },
       body,
       redirect: 'follow'
@@ -97,7 +100,9 @@ async function handleApi_(request, env) {
       headers: {
         ...headers,
         'Content-Type': contentType || 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store, no-cache, must-revalidate'
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
       }
     });
   } catch (err) {
@@ -117,7 +122,7 @@ export default {
       return handleApi_(request, env);
     }
 
-        // All non-API requests are served by the static ERP frontend.
+    // All non-API requests are served by the static ERP frontend.
     // Explicitly preserve UTF-8 for text assets so symbols such as
     // ✓ • → ↔ ⚙ are rendered correctly.
     if (env.ASSETS) {
