@@ -241,8 +241,9 @@ function go(page){
   if(page==='settings'){state._settingsUsersRequested=false;}
   if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
   if(page==='dashboard'){
-    // Never reuse an older dashboard attendance snapshot when opening Dashboard.
+    // Never reuse older student or faculty attendance snapshots when opening Dashboard.
     state.data.dashboardSnapshot=null;
+    state.dashboardFacultyAttendance=null;
     state._dashboardLastRefreshAt=0;
   }
   state.page=page;
@@ -256,6 +257,34 @@ function go(page){
 }
 function toggleSidebar(){const side=document.getElementById('sidebar');const back=document.getElementById('sidebarBackdrop');side?.classList.toggle('open');back?.classList.toggle('show',!!side?.classList.contains('open'));}
 function toggleTheme(){state.theme=state.theme==='dark'?'light':'dark';localStorage.setItem('erp-theme',state.theme);document.documentElement.dataset.theme=state.theme}
+function refreshDashboardFacultyAttendance_(renderAfter=true){
+  if(!isGAS() || !state.session.token || state._dashboardFacultyInFlight) return;
+  state._dashboardFacultyInFlight=true;
+
+  const token=state.session.token;
+  const dateKey=state.date;
+  const requestedBranch=isSuperAdmin()
+    ? 'ALL'
+    : String(state.session.user?.Branch_ID||'BR001');
+
+  google.script.run
+    .withSuccessHandler(o=>{
+      state._dashboardFacultyInFlight=false;
+      if(dateKey!==state.date) return;
+
+      const records=Array.isArray(o?.attendance)?o.attendance:[];
+      // Keep the same authoritative faculty dataset used by Daily Attendance.
+      state.dashboardFacultyAttendance=records;
+      state.facultyAttendance=records;
+
+      if(renderAfter && state.page==='dashboard') render();
+    })
+    .withFailureHandler(()=>{
+      state._dashboardFacultyInFlight=false;
+    })
+    .getFacultyAttendanceOptions(token,{branchId:requestedBranch,date:dateKey});
+}
+
 function refreshDashboardSnapshot(renderAfter=true){
   if(!isGAS() || !state.session.token || state._dashboardSnapshotInFlight) return;
   const requestSeq=Number(state._dashboardSnapshotSeq||0)+1;
@@ -282,6 +311,7 @@ function startDashboardLiveRefresh(){
   state._dashboardSyncTimer=setInterval(()=>{
     if(state.page==='dashboard' && isGAS() && state.session.token && !activeEditorNeedsProtection_()){
       refreshDashboardSnapshot(true);
+      refreshDashboardFacultyAttendance_(true);
     }
   },5000);
 }
@@ -507,6 +537,7 @@ function render(){
     c.innerHTML=dashboardHTML();
     const snapDate=String(state.data.dashboardSnapshot?.date||'');
     if(!state.data.dashboardSnapshot || snapDate!==String(state.date||'')) setTimeout(()=>refreshDashboardSnapshot(true),0);
+    if(!Array.isArray(state.dashboardFacultyAttendance)) setTimeout(()=>refreshDashboardFacultyAttendance_(true),0);
     startDashboardLiveRefresh();
   }
   else if(state.page==='attendance') c.innerHTML=state.attendanceMode==='faculty'?facultyAttendanceHTML():attendanceHTML();
@@ -649,14 +680,48 @@ function attendanceCounts(){
 }
 
 function dashboardFacultyAttendanceHTML(){
-  const snap=state.data.dashboardSnapshot||{};
-  const rows=Array.isArray(snap.facultyAttendance)?snap.facultyAttendance.slice():[];
-  const summary=snap.facultySummary||{total:0,byStatus:{}};
-  const live=rows.slice().sort((a,b)=>new Date(b.Updated_At||b.Marked_At||0)-new Date(a.Updated_At||a.Marked_At||0)).slice(0,12);
-  const statuses=['Early Arrival','On Time Arrival','Late Arrival by 5–10 Minutes','Late by More Than 15 Minutes','More Than 30 Minutes Late','Absent','Others'];
-  const cards=statuses.map(st=>metricCard(st,String(summary.byStatus?.[st]||0),'Faculty / Teacher','blue')).join('');
-  return `<div class="dashboard-section-head"><div><span class="section-kicker kicker-purple">FACULTY / TEACHER</span><h2>Live Faculty / Teacher Attendance</h2><p>Saved attendance from today, filtered to this user's authorised branch, campus or batch scope.</p></div><button class="text-link" onclick="go('attendance');setTimeout(()=>switchAttendanceMode('faculty'),0)">Open faculty attendance →</button></div><div class="grid grid-4" style="margin-bottom:14px"><div class="card kpi"><div class="metric-label">Total Saved</div><div class="metric">${Number(summary.total||0).toLocaleString()}</div><span class="badge badge-blue">Today's records</span></div>${cards}</div><div class="card"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Latest faculty attendance records</h3><div class="muted">Most recent saved entries within your authorised scope.</div></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Batch</th><th>Campus</th><th>Faculty</th><th>Subject</th><th>Status</th><th>Saved At</th></tr></thead><tbody>${live.length?live.map(r=>`<tr><td><b>${escapeHtml(r.Batch_Name||r.Batch_Code||r.Batch_ID||'')}</b></td><td>${escapeHtml(r.Campus_Name||'')}</td><td>${escapeHtml(r.Faculty_Name||r.Faculty_ID||'')}</td><td>${escapeHtml(r.Subject_Name||'')}</td><td><span class="badge ${String(r.Attendance_Status||'').toLowerCase()==='absent'?'badge-red':(String(r.Attendance_Status||'').toLowerCase()==='others'?'badge-yellow':'badge-green')}">${escapeHtml(r.Attendance_Status||'')}</span></td><td class="muted">${r.Updated_At||r.Marked_At?escapeHtml(formatDateTime_(r.Updated_At||r.Marked_At)):'—'}</td></tr>`).join(''):`<tr><td colspan="6" class="muted center">No faculty / teacher attendance has been saved for today in your authorised scope.</td></tr>`}</tbody></table></div></div>`;
+  const dateKey=normalizeDateKey_(state.date);
+  const source=Array.isArray(state.dashboardFacultyAttendance)
+    ? state.dashboardFacultyAttendance
+    : (Array.isArray(state.facultyAttendance)?state.facultyAttendance:[]);
+
+  const rows=source.filter(r=>{
+    if(normalizeDateKey_(r.Attendance_Date||'')!==dateKey) return false;
+    return !!String(r.Attendance_Status||'').trim();
+  });
+
+  const byStatus={};
+  rows.forEach(r=>{
+    const status=String(r.Attendance_Status||'').trim();
+    byStatus[status]=(byStatus[status]||0)+1;
+  });
+
+  const live=rows
+    .slice()
+    .sort((a,b)=>{
+      const da=new Date(a.Updated_At||a.Marked_At||0).getTime();
+      const db=new Date(b.Updated_At||b.Marked_At||0).getTime();
+      return db-da;
+    })
+    .slice(0,12);
+
+  const statuses=[
+    'Early Arrival',
+    'On Time Arrival',
+    'Late Arrival by 5–10 Minutes',
+    'Late by More Than 15 Minutes',
+    'More Than 30 Minutes Late',
+    'Absent',
+    'Others'
+  ];
+
+  const cards=statuses
+    .map(st=>metricCard(st,String(byStatus[st]||0),'Faculty / Teacher','blue'))
+    .join('');
+
+  return `<div class="dashboard-section-head"><div><span class="section-kicker kicker-purple">FACULTY / TEACHER</span><h2>Live Faculty / Teacher Attendance</h2><p>Saved attendance from today, using the same authorised Faculty / Teacher Attendance records shown in Daily Attendance.</p></div><button class="text-link" onclick="go('attendance');setTimeout(()=>switchAttendanceMode('faculty'),0)">Open faculty attendance →</button></div><div class="grid grid-4" style="margin-bottom:14px"><div class="card kpi"><div class="metric-label">Total Saved</div><div class="metric">${rows.length.toLocaleString()}</div><span class="badge badge-blue">Today's records</span></div>${cards}</div><div class="card"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Latest faculty attendance records</h3><div class="muted">Most recent saved entries from the same source used by Daily Attendance.</div></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Batch</th><th>Campus</th><th>Faculty</th><th>Subject</th><th>Status</th><th>Saved At</th></tr></thead><tbody>${live.length?live.map(r=>`<tr><td><b>${escapeHtml(r.Batch_Name||r.Batch_Code||r.Batch_ID||'')}</b></td><td>${escapeHtml(r.Campus_Name||'')}</td><td>${escapeHtml(r.Faculty_Name||r.Faculty_ID||'')}</td><td>${escapeHtml(r.Subject_Name||'')}</td><td><span class="badge ${String(r.Attendance_Status||'').toLowerCase()==='absent'?'badge-red':(String(r.Attendance_Status||'').toLowerCase()==='others'?'badge-yellow':'badge-green')}">${escapeHtml(r.Attendance_Status||'')}</span></td><td class="muted">${r.Updated_At||r.Marked_At?escapeHtml(formatDateTime_(r.Updated_At||r.Marked_At)):'—'}</td></tr>`).join(''):`<tr><td colspan="6" class="muted center">No faculty / teacher attendance has been saved for today in your authorised scope.</td></tr>`}</tbody></table></div></div>`;
 }
+
 
 function dashboardHTML(){
   const s=stats(), cats=categoryTotals(), a=attendanceCounts();
@@ -1074,9 +1139,10 @@ function saveFacultyAttendance(silent=false){
     google.script.run.withSuccessHandler(res=>{
       state._facultySaveInFlight=false;
       state.facultyAttendanceDirty=false;
-      // The Daily Attendance page receives the authoritative post-write snapshot.
-      // The Dashboard has its own snapshot, so explicitly invalidate it too.
+      // The Daily Attendance page and Dashboard now share the same authoritative
+      // Faculty Attendance read path. Invalidate both cached views after every save.
       state.data.dashboardSnapshot=null;
+      state.dashboardFacultyAttendance=null;
       state._dashboardLastRefreshAt=0;
       state.facultyLastSavedAt=res.savedAt||new Date().toISOString();
       const stamp=document.getElementById('facultyAttendanceSaveStamp');
@@ -1090,8 +1156,10 @@ function saveFacultyAttendance(silent=false){
       if(!silent){
         showToast(`${res.saved||0} subject attendance records saved`);
         refreshDashboardSnapshot(true);
+        refreshDashboardFacultyAttendance_(true);
       } else if(state.page==='dashboard'){
         refreshDashboardSnapshot(true);
+        refreshDashboardFacultyAttendance_(true);
       }
     }).withFailureHandler(err=>{
       state._facultySaveInFlight=false;
