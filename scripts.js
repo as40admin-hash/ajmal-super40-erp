@@ -1,5 +1,5 @@
 /*
- * Cloudflare Pages compatibility bridge.
+ * Cloudflare Pages compatibility bridge.Updates
  * Keeps the existing ERP UI/business workflow code unchanged by providing
  * the same google.script.run chaining shape over the /api Pages Function.
  */
@@ -1061,7 +1061,11 @@ function facultySubjectAssignments_(batchId){
     const facultyName=meta.name||String(a.Faculty_Name||a.Teacher_Name||'').trim();
     const initials=meta.initials||String(a.Initials||a.Abbreviation||'').trim();
     const assignmentId=String(a.Assignment_ID||'').trim();
-    const key=assignmentId || [facultyId,subject.toLowerCase(),String(a.Batch_ID||batchId)].join('|');
+    const key=[
+      facultyId.toUpperCase(),
+      subject.toLowerCase(),
+      String(a.Batch_ID||batchId).trim().toUpperCase()
+    ].join('|');
     rows.push({
       key,facultyId,facultyName,subject,initials,
       batchId:String(a.Batch_ID||batchId),
