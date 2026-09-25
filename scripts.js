@@ -1,5 +1,5 @@
 /*
- * Cloudflare Pages compatibility bridge.Updates
+ * Cloudflare Pages compatibility bridge...
  * Keeps the existing ERP UI/business workflow code unchanged by providing
  * the same google.script.run chaining shape over the /api Pages Function.
  */
@@ -88,6 +88,8 @@ const state = {
   session: { token: localStorage.getItem('erp-session-token') || '', user: JSON.parse(localStorage.getItem('erp-session-user') || 'null') },
   importUnlocked: false,
   resultUploadProof: '',
+  resultUploadCategory: '',
+  facultyMasterImportCategory: '',
   resultOptions: {categories:[],classes:[],exams:[],batches:[]},
   adminUsers: [],
   attendanceMode: 'student',
@@ -559,7 +561,7 @@ function render(){
 function stats(){
   const batches=(state.data.batches||[]).filter(studentAttendanceBatch_);
   const total=(state.data.students||[]).length || batches.reduce((s,b)=>s+Number(b.Expected_Strength||b.batch_total||0),0);
-  const categories=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE'];
+  const categories=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE','School'];
   return {total,batchCount:batches.length,categories};
 }
 function categoryTotals(){
@@ -579,7 +581,7 @@ function categoryTotals(){
 function branchCategoryTotals(){
   const out={};
   const batches=state.data.batches||[];
-  const categoryOrder=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE'];
+  const categoryOrder=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE','School'];
   const branchScope=isSuperAdmin()?'ALL':String(state.session.user?.Branch_ID||'BR001');
   batches.forEach(b=>{
     const bid=String(b.Branch_ID||'BR001');
@@ -729,7 +731,7 @@ function dashboardHTML(){
   const scopedStudents=state.data.students||[];
   const quickResultRoles=['Admin','Result Operator'];
   const todayLabel=formatDate(state.date);
-  const categoryOrder=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE'];
+  const categoryOrder=['XI NEET','XII NEET','Challengers NEET','XI JEE','XII JEE','Challengers JEE','School'];
   const bc=branchCategoryTotals();
   const scopedBranches=branchRows.filter(br=>isSuperAdmin() || String(br.Branch_ID)===String(state.session.user?.Branch_ID||'BR001'));
   const activity=[
@@ -779,8 +781,8 @@ function dashboardHTML(){
     </div>
     ${dashboardFacultyAttendanceHTML()}
     <div class="dashboard-section-head"><div><span class="section-kicker kicker-gold">ACADEMICS</span><h2>Academic Category Overview</h2><p>Combined batch-matrix strength across authorised branches, followed by branch-wise segregation.</p></div><button class="text-link" onclick="go('batches')">Open batch matrix →</button></div>
-    <div class="academic-combined-panel"><div class="academic-combined-title"><div><h3>Combined Academic Strength</h3><span>${isSuperAdmin()?'All four branches combined':'Your authorised branch'}</span></div><strong>${categoryOrder.reduce((n,k)=>n+Number(cats[k]||0),0).toLocaleString()}</strong></div><div class="academic-combined-grid">${combinedCells}</div></div>
-    <div class="academic-branch-heading"><div><h3>Branch-wise Academic Category Breakdown</h3><span>XI NEET, XII NEET, Challengers NEET, XI JEE, XII JEE and Challengers JEE</span></div></div>
+    <div class="academic-combined-panel"><div class="academic-combined-title"><div><h3>Combined Academic Strength</h3><span>${isSuperAdmin()?'All authorised branches combined':'Your authorised branch'}</span></div><strong>${categoryOrder.reduce((n,k)=>n+Number(cats[k]||0),0).toLocaleString()}</strong></div><div class="academic-combined-grid">${combinedCells}</div></div>
+    <div class="academic-branch-heading"><div><h3>Branch-wise Academic Category Breakdown</h3><span>XI NEET, XII NEET, Challengers NEET, XI JEE, XII JEE, Challengers JEE and School (VI–X)</span></div></div>
     <div class="branch-academic-list">${branchTables || '<div class="muted">No branch academic data available.</div>'}</div>
     <div class="dashboard-section-head"><div><span class="section-kicker kicker-green">NETWORK</span><h2>Branch Overview</h2><p>${isSuperAdmin()?'All authorised branches are visible to Super Admin.':'Only your authorised branch is shown.'}</p></div><button class="text-link" onclick="go('reports')">Open reports →</button></div>
     <div class="branch-card-grid">${branchRows.filter(br=>isSuperAdmin() || String(br.Branch_ID)===String(state.session.user?.Branch_ID||'BR001')).map((br,idx)=>{const id=String(br.Branch_ID);const st=scopedStudents.filter(st=>String(st.Branch_ID||'BR001')===id).length;const ba=(state.data.batches||[]).filter(b=>String(b.Branch_ID||'BR001')===id).length;const tone=['branch-ocean','branch-gold','branch-emerald','branch-violet'][idx%4]; return `<button class="branch-card ${tone}" onclick="go('batches');state.branchFilter='${escapeHtml(id)}';render()"><div class="branch-icon">${['H','B','D','K'][idx%4]}</div><div class="branch-name">${escapeHtml(br.Branch_Name)}</div><div class="branch-stats"><span><b>${st.toLocaleString()}</b><small>students</small></span><span><b>${ba}</b><small>batches</small></span></div><div class="branch-arrow">→</div></button>`}).join('')}</div>
@@ -1271,7 +1273,7 @@ function attendanceHTML(){
   const filterMarkup=operator ? `<input class="input" type="date" value="${state.date}" onchange="state.date=this.value;state.openAttendanceBatchId='';state.attendanceDirty=false;loadData()"><select id="attendanceCategory" class="select" onchange="state.categoryFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="All">Select category</option>${cats.slice(1).map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.categoryFilter||state.categoryFilter==='All'?'disabled':''} onchange="state.classFilter=this.value;state.batchFilter='';render()"><option value="">${state.categoryFilter&&state.categoryFilter!=='All'?'Select class':'Select category first'}</option>${state.categoryFilter&&state.categoryFilter!=='All'?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><div class="select-like locked-filter">${escapeHtml(assignedCampusName_()||'Assigned Campus')}</div><select id="attendanceBatch" class="select" ${(!state.categoryFilter||state.categoryFilter==='All'||!state.classFilter||state.classFilter==='All')?'disabled':''} onchange="state.batchFilter=this.value;render()"><option value="">${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?'Select batch':'Select class first'}</option>${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>` : `${superAdmin?`<select class="select" onchange="state.branchFilter=this.value;state.categoryFilter='All';state.classFilter='All';state.campusFilter='';state.batchFilter='';render()"><option value="ALL">All branches</option>${branchOptionsHtml(selectedBranch)}</select>`:`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Branch_Name||'Assigned Branch')}</div>`}${campusRestrictedUser()?`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Campus_Name||campuses[0]||'Assigned Campus')}</div>`:`<select id="attendanceCampus" class="select" onchange="state.campusFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="">All campuses</option>${campuses.map(c=>`<option value="${escapeAttr(c)}" ${state.campusFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select>`}<select id="attendanceCategory" class="select" onchange="state.categoryFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="All">All categories</option>${cats.map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${c}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.campusFilter?'disabled':''} onchange="state.classFilter=this.value;state.batchFilter='';render()"><option value="All">${state.campusFilter?'All classes':'Select campus first'}</option>${state.campusFilter?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><select id="attendanceBatch" class="select" ${(!state.campusFilter||state.classFilter==='All')?'disabled':''} onchange="state.batchFilter=this.value;render()"><option value="">${state.campusFilter&&state.classFilter!=='All'?'All batches':'Select class first'}</option>${state.campusFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>`;
   return `${tabs}<div class="card attendance-filter-card"><div class="section-title" style="margin:0 0 12px"><div><h2 style="margin:0">Daily Attendance</h2><div class="muted">${operator?'Campus-specific daily student attendance. Lists cascade Category → Class → Campus → Batch.':'Campus-scoped daily student attendance. Lists cascade from branch → category → class → campus → batch.'}</div></div><span class="badge badge-blue">${superAdmin?'Super Admin':operator?'Campus Restricted':'Branch Restricted'}</span></div><div class="toolbar attendance-filters">${filterMarkup}</div>
   ${isHoliday?`<div class="badge badge-yellow" style="margin-bottom:14px">Attendance not required on this date according to the calendar.</div>`:''}
-  <div class="grid grid-6" style="margin-bottom:16px">${metricCard('Eligible',rows.reduce((n,b)=>n+Number(b.Expected_Strength||0),0),'Current filter','blue')}${metricCard('Present',attendanceCounts().Present,'Marked','green')}${metricCard('Absent',attendanceCounts().Absent,'Marked','red')}${metricCard('Leave',attendanceCounts().Leave,'Marked','yellow')}${metricCard('Sick',attendanceCounts().Sick,'Marked','blue')}${metricCard('Not Marked',Math.max(0,attendanceCounts().Not_Marked),'Pending','gray')}</div>
+  <div class="grid grid-6" style="margin-bottom:16px">${metricCard('Eligible',attendanceCounts().eligible,'Current filter','blue')}${metricCard('Present',attendanceCounts().Present,'Marked','green')}${metricCard('Absent',attendanceCounts().Absent,'Marked','red')}${metricCard('Leave',attendanceCounts().Leave,'Marked','yellow')}${metricCard('Sick',attendanceCounts().Sick,'Marked','blue')}${metricCard('Not Marked',Math.max(0,attendanceCounts().Not_Marked),'Pending','gray')}</div>
   <div class="table-wrap"><table class="data-table"><thead><tr><th>Category</th><th>Class</th><th>Campus</th><th>Batch</th><th>Eligible</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(b=>{const x=batchAttendanceSummary(b); const badge=x.status==='Completed'?'badge-green':(x.status==='In Progress'?'badge-blue':'badge-yellow'); return `<tr><td>${escapeHtml(b.Category_Name||b.Category||'')}</td><td>${escapeHtml(classFromBatch_(b))}</td><td>${escapeHtml(b.Campus_Name||b.Campus||'')}</td><td><b>${escapeHtml(b.Batch_Code||'')}</b></td><td>${Number(b.Expected_Strength||0).toLocaleString()}</td><td><span class="badge ${badge}">${x.status}${x.marked?` • ${x.marked}/${x.eligible}`:''}</span></td><td><button class="btn btn-primary" onclick="openAttendance('${escapeAttr(b.Batch_ID)}')">${x.status==='Completed'?'Review':'Open'}</button></td></tr>`}).join('')||`<tr><td colspan="7" class="muted center">No matching campus/class/batch records.</td></tr>`}</tbody></table></div></div>`;
 }
 
@@ -1828,9 +1830,9 @@ function facultyAdminHtml(){
   }));
   state._localFacultyEditRows=rows.map(r=>({Faculty_ID:r.f.Faculty_ID||'',Faculty_Name:r.f.Faculty_Name||'',Initials:r.f.Initials||'',Branch_ID:r.f.Branch_ID||'',Branch_Name:r.branches,Contact_Number:r.f.Contact_Number||'',Status:r.f.Status||'Active',subjects:r.subjects?String(r.subjects).split(/\s*[,;|]\s*/).filter(Boolean):[],campuses:r.campuses?String(r.campuses).split(/\s*[,;|]\s*/).filter(Boolean):[],classes:r.classes?String(r.classes).split(/\s*[,;|]\s*/).filter(Boolean):[],batches:r.batches?String(r.batches).split(/\s*[,;|]\s*/).filter(Boolean):[]}));
   return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2 style="font-size:16px;margin:0">Faculty / Teacher Master & Assignments</h2><div class="muted">Faculty master is managed from the imported CSV/Excel source and mapped to Branch → Campus → Class → Batch → Subject.</div></div><span class="badge badge-red">${String(state.session.user?.Role||'')==='Super Admin'?'SUPER ADMIN':(String(state.session.user?.Role||'')==='Admin'?'ADMIN':'ACADEMIC ADMIN')}</span></div>
-  <div class="card-soft" style="margin-top:12px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Import Faculty / Teacher Master</h3><div class="muted small">Use the standard template. Accepted: CSV, XLSX, XLS. The uploaded CSV/Excel file is the source of truth for this faculty list.</div></div></div><div class="grid grid-3" style="margin-top:10px"><div><label class="small muted">Source file</label><input id="facultyMasterFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleFacultyMasterFile(this)"></div><div><label class="small muted">Source link (optional)</label><input id="facultyMasterSourceUrl" type="url" class="input" placeholder="Public CSV / Google Sheets published CSV link"></div><div class="toolbar" style="align-items:end"><button class="btn btn-secondary" onclick="facultyMasterTemplate()">Download Standard Template</button><button class="btn btn-primary" onclick="importFacultyFromSourceUrl()">Import from Link</button></div></div><div id="facultyMasterImportPreview" style="margin-top:10px"></div></div>
+  <div class="card-soft" style="margin-top:12px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Import Faculty / Teacher Master</h3><div class="muted small">Use the standard template. Accepted: CSV, XLSX, XLS. The uploaded CSV/Excel file is the source of truth for this faculty list.</div></div></div><div class="grid grid-4" style="margin-top:10px"><div><label class="small muted">Import category</label><select id="facultyMasterImportCategory" class="select"><option value="">Use Category_Name from CSV</option><option value="School">AMRS School (Classes VI–X)</option><option value="AJMAL SUPER 40">AJMAL SUPER 40 (NEET / JEE)</option></select></div><div><label class="small muted">Source file</label><input id="facultyMasterFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleFacultyMasterFile(this)"></div><div><label class="small muted">Source link (optional)</label><input id="facultyMasterSourceUrl" type="url" class="input" placeholder="Public CSV / Google Sheets published CSV link"></div><div class="toolbar" style="align-items:end"><button class="btn btn-secondary" onclick="facultyMasterTemplate()">Download Standard Template</button><button class="btn btn-primary" onclick="importFacultyFromSourceUrl()">Import from Link</button></div></div><div id="facultyMasterImportPreview" style="margin-top:10px"></div></div>
   <div class="toolbar" style="margin-top:12px;justify-content:space-between"><span class="muted small">${rows.length} faculty master records • ${aopts.length} active assignments</span><button class="btn btn-secondary" onclick="loadFacultyAdminData(true)">↻ Refresh Faculty List</button></div>
-  <div class="table-wrap" style="margin-top:12px"><table class="data-table"><thead><tr><th>Faculty Name</th><th>Initials / Abbreviation</th><th>Subject</th><th>Branch</th><th>Campus</th><th>Class</th><th>Batch / Batches</th><th>Contact Number</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.length?rows.map((r,i)=>`<tr><td><b>${escapeHtml(r.f.Faculty_Name||'')}</b><div class="muted small">${escapeHtml(r.f.Faculty_ID||'')}</div></td><td>${escapeHtml(r.f.Initials||'')}</td><td>${escapeHtml(r.subjects.join(', ')||'—')}</td><td>${escapeHtml(r.branches||'—')}</td><td>${escapeHtml(r.campuses||'—')}</td><td>${escapeHtml(r.classes||'—')}</td><td>${escapeHtml(r.batches||'—')}</td><td>${escapeHtml(r.f.Contact_Number||'—')}</td><td><span class="badge ${String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'badge-red':'badge-green'}">${escapeHtml(r.f.Status|| (String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'Inactive':'Active'))}</span></td><td><button class="btn btn-secondary btn-sm" onclick="openLocalFacultyEdit(${i})">Edit</button></td></tr>`).join(''):`<tr><td colspan="10" class="muted center">No faculty master data imported yet. Use the standard CSV/Excel template above.</td></tr>`}</tbody></table></div></div>`;
+  <div class="table-wrap" style="margin-top:12px"><table class="data-table"><thead><tr><th>Faculty Name</th><th>Initials / Abbreviation</th><th>Category</th><th>Subject</th><th>Branch</th><th>Campus</th><th>Class</th><th>Batch / Batches</th><th>Contact Number</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows.length?rows.map((r,i)=>`<tr><td><b>${escapeHtml(r.f.Faculty_Name||'')}</b><div class="muted small">${escapeHtml(r.f.Faculty_ID||'')}</div></td><td>${escapeHtml(r.f.Initials||'')}</td><td>${escapeHtml(r.f.Category_Name||'—')}</td><td>${escapeHtml(r.subjects.join(', ')||'—')}</td><td>${escapeHtml(r.branches||'—')}</td><td>${escapeHtml(r.campuses||'—')}</td><td>${escapeHtml(r.classes||'—')}</td><td>${escapeHtml(r.batches||'—')}</td><td>${escapeHtml(r.f.Contact_Number||'—')}</td><td><span class="badge ${String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'badge-red':'badge-green'}">${escapeHtml(r.f.Status|| (String(r.f.Active_Flag||'TRUE').toUpperCase()==='FALSE'?'Inactive':'Active'))}</span></td><td><button class="btn btn-secondary btn-sm" onclick="openLocalFacultyEdit(${i})">Edit</button></td></tr>`).join(''):`<tr><td colspan="10" class="muted center">No faculty master data imported yet. Use the standard CSV/Excel template above.</td></tr>`}</tbody></table></div></div>`;
 }
 function openLocalFacultyEdit(index){const f=state._localFacultyEditRows?.[index];if(f)openFacultyEdit(f);}
 
@@ -1928,7 +1930,7 @@ function saveEditedFacultyMaster(){
   }
 }
 function facultyMasterTemplate(){
-  const headers=['Faculty_ID','Faculty_Name','Initials/Abbreviation','Subject','Branch_ID','Branch_Name','Campus_Name','Class_Name','Batch/Batches','Contact_Number','Status','Remarks'];
+  const headers=['Faculty_ID','Faculty_Name','Initials/Abbreviation','Category_Name','Subject','Branch_ID','Branch_Name','Campus_Name','Class_Name','Batch/Batches','Contact_Number','Status','Remarks'];
   const csv=headers.join(',')+'\n'; const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='Faculty_Master_Template.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 function loadFacultyAdminData(force=false){
@@ -1968,6 +1970,7 @@ function normalizeFacultyMasterRows(rows){
       Subject:String(pick('Subject','Subjects','Subject Name','SubjectName')).trim(),
       Branch_ID:String(pick('Branch_ID','Branch Id','BranchID')).trim(),
       Branch_Name:String(pick('Branch_Name','Branch Name','Branch')).trim(),
+      Category_Name:String(pick('Category_Name','Category Name','Category')).trim(),
       Campus_Name:String(pick('Campus_Name','Campus Name','Campus')).trim(),
       Class_Name:String(pick('Class_Name','Class Name','Class')).trim(),
       Batch_Batches:String(pick('Batch/Batches','Batch_Batches','Batch Batches','Batches','Batch','Batch Code','Batch_Code')).trim(),
@@ -1980,8 +1983,8 @@ function normalizeFacultyMasterRows(rows){
 function showFacultyMasterImportPreview(rows,source){
   facultyMasterImportRows=normalizeFacultyMasterRows(rows); const errors=[]; const seen=new Set(); facultyMasterImportRows.forEach((r,i)=>{const n=i+2;if(!r.Faculty_ID)errors.push(`Row ${n}: Faculty_ID missing`);if(!r.Faculty_Name)errors.push(`Row ${n}: Faculty_Name missing`);const k=r.Faculty_ID.toLowerCase();if(k&&seen.has(k))errors.push(`Row ${n}: duplicate Faculty_ID ${r.Faculty_ID}`);if(k)seen.add(k);});
   const el=document.getElementById('facultyMasterImportPreview'); if(!el)return;
-  const headers=['Faculty Name','Initials / Abbreviation','Subject','Branch','Campus','Class','Batch / Batches','Contact Number','Status'];
-  const previewRows=facultyMasterImportRows.map(r=>[r.Faculty_Name,r.Initials,r.Subject,r.Branch_Name||r.Branch_ID,r.Campus_Name,r.Class_Name,r.Batch_Batches,r.Contact_Number,r.Status]);
+  const headers=['Faculty Name','Initials / Abbreviation','Category','Subject','Branch','Campus','Class','Batch / Batches','Contact Number','Status'];
+  const previewRows=facultyMasterImportRows.map(r=>[r.Faculty_Name,r.Initials,r.Category_Name||'—',r.Subject,r.Branch_Name||r.Branch_ID,r.Campus_Name,r.Class_Name,r.Batch_Batches,r.Contact_Number,r.Status]);
   const previewTable=previewRows.length?`<div class="table-wrap" style="margin-top:10px"><table class="data-table"><thead><tr>${headers.map(h=>`<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${previewRows.map(row=>`<tr>${row.map(v=>`<td>${escapeHtml(v||'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`:'';
   el.innerHTML=`<div class="alert ${errors.length?'alert-danger':'alert-success'}">${errors.length?errors.slice(0,20).map(escapeHtml).join('<br>'):`${facultyMasterImportRows.length} faculty rows read from ${escapeHtml(source||'selected file')}. The preview below is exactly the uploaded file data.`}</div>${previewTable}${!errors.length&&facultyMasterImportRows.length?`<div class="toolbar"><button class="btn btn-primary" onclick="confirmFacultyMasterImport()">Replace Faculty Master with This File</button><button class="btn btn-secondary" onclick="document.getElementById('facultyMasterImportPreview').innerHTML=''">Cancel</button></div>`:''}`;
 }
@@ -2024,7 +2027,8 @@ function confirmFacultyMasterImport() {
       .importFacultyMaster(
         state.session.token,
         facultyMasterImportRows,
-        source
+        source,
+        document.getElementById('facultyMasterImportCategory')?.value||''
       );
   } else {
     const newFaculties = [];
@@ -2071,7 +2075,7 @@ function importFacultyFromSourceUrl() {
       .withFailureHandler(e => {
         showToast(e.message || 'Could not import from source link');
       })
-      .importFacultyMasterFromUrl(state.session.token, url);
+      .importFacultyMasterFromUrl(state.session.token, url, document.getElementById('facultyMasterImportCategory')?.value||'');
   } else {
     fetch(url)
       .then(r => {
@@ -2115,7 +2119,7 @@ function settingsHTML(){
       <div><label class="small muted">Confirm new password</label><input id="confirmPwd" class="input" type="password"></div>
     </div>
     <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" onclick="changeOwnPassword()">Change My Password</button></div>
-    ${canManageSettings?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN &amp; ADMIN</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>`;
+    ${canManageSettings?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN &amp; ADMIN</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS Gopal Nagar','AMRS_GOPAL_NAGAR')">Prefill AMRS Gopal Nagar User</button><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS Jugijan','AMRS_JUGIJAN')">Prefill AMRS Jugijan User</button></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>`;
 }
 
 function saveAttendanceSettings(){
@@ -2270,6 +2274,22 @@ function resetAdminUserForm(){
   const search=document.getElementById('attendanceBatchAssignmentSearch'); if(search) search.value='';
   setTimeout(()=>{onAdminUserRoleOrBranchChanged();toggleAttendanceBatchAssignment([]);},0);
 }
+function prefillAMRSCampusUser(campusName,userId){
+  const campus=(state.data.campuses||[]).find(c=>String(c.Campus_Name||c.Location_Name||'').trim().toLowerCase()===String(campusName).trim().toLowerCase());
+  const branch=campus?.Branch_ID||'BR001';
+  const role=document.getElementById('adminRole'); if(role)role.value='Campus Admin';
+  const uid=document.getElementById('adminUserId'); if(uid)uid.value=userId||'';
+  const uname=document.getElementById('adminUserName'); if(uname)uname.value=campusName;
+  const branchEl=document.getElementById('adminBranch');
+  if(branchEl){branchEl.multiple=false;branchEl.value=branch;onAdminUserRoleOrBranchChanged();}
+  setTimeout(()=>{
+    const campusEl=document.getElementById('adminCampus');
+    if(campusEl&&campus)campusEl.value=campus.Campus_ID||'';
+    const pwd=document.getElementById('adminUserPassword'); if(pwd)pwd.focus();
+    showToast(`${campusName} Campus Admin details prefilled. Set the password, then click Create / Update User.`);
+  },80);
+}
+
 function adminSaveUser(){
   const campusEl=document.getElementById('adminCampus');
   const campusId=campusEl?.value||'';
@@ -2304,7 +2324,7 @@ function resultsHTML(){
     <div class="result-hero card"><div><div class="eyebrow">ACADEMIC PERFORMANCE</div><h2 style="margin:4px 0">Students Result Report</h2><div class="muted">Central result database linked to UIN, category, batch and class.</div></div><div class="result-quick-actions"><button class="btn btn-primary" onclick="showResultTab('uin')">Search by UIN</button>${canUpload?`<button class="btn btn-secondary" onclick="requireResultUploadAccess()">🔒 Result Upload</button>`:''}</div></div>
     <div class="result-tabs"><button id="resultTabUin" class="result-tab active" onclick="showResultTab('uin')">Search Result by UIN</button><button id="resultTabClass" class="result-tab" onclick="showResultTab('class')">Class Wise Result</button><button id="resultTabBatch" class="result-tab" onclick="showResultTab('batch')">Batch Wise Result</button><button id="resultTabAverage" class="result-tab" onclick="showResultTab('average')">Average Result Analysis</button></div>
     <div id="resultPanel"></div>
-    ${canUpload?`<div class="card result-upload-card" id="resultUploadPanel" style="display:${state.resultUploadProof?'block':'none'}"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Result Upload</h3><div class="muted">Protected import • Admin / Result Operator only</div></div><span class="badge badge-red">AUTHORIZED</span></div><div class="upload-drop" onclick="document.getElementById('resultFile').click()" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleResultDrop(event)"><input id="resultFile" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleResultFile(this.files[0])"><div style="font-size:30px">📊</div><h3 style="margin:8px 0 4px">Drop CSV or Excel result file here</h3><div class="muted">Recommended fields: UIN, Exam_Name, Exam_Date, Category_Name, Batch_Code, Total_Marks, Max_Total_Marks, Percentage, Rank</div></div><div id="resultImportPreview"></div></div>`:''}
+    ${canUpload?`<div class="card result-upload-card" id="resultUploadPanel" style="display:${state.resultUploadProof?'block':'none'}"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Result Upload</h3><div class="muted">Protected import • Admin / Result Operator only</div></div><span class="badge badge-red">AUTHORIZED</span></div><div class="card-soft" style="margin-bottom:12px"><div class="grid grid-2"><div><label class="small muted">Upload Category</label><select id="resultUploadCategory" class="select"><option value="">Use Category_Name from CSV</option><option value="School">AMRS School (Classes VI–X)</option><option value="AJMAL SUPER 40">AJMAL SUPER 40 (NEET / JEE)</option></select></div><div class="muted small" style="display:flex;align-items:end">School uploads are validated against AMRS Class VI–X batch and campus records.</div></div></div><div class="upload-drop" onclick="document.getElementById('resultFile').click()" ondragover="event.preventDefault();this.classList.add('dragover')" ondragleave="this.classList.remove('dragover')" ondrop="handleResultDrop(event)"><input id="resultFile" type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleResultFile(this.files[0])"><div style="font-size:30px">📊</div><h3 style="margin:8px 0 4px">Drop CSV or Excel result file here</h3><div class="muted">Recommended fields: UIN, Exam_Name, Exam_Date, Category_Name, Batch_Code, Physics_Marks, Chemistry_Marks, Botany_Marks, Zoology_Marks, Maths_Marks, Total_Obtained_Marks, Total_Max_Marks, Percentage, Rank</div></div><div id="resultImportPreview"></div></div>`:''}
   </div><div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><b>Recommended result import design</b><div class="muted">One row per UIN per exam. Subject marks can be provided as Physics_Marks, Chemistry_Marks, Biology_Marks, Maths_Marks or Subject_Name + Subject_Marks.</div></div></div></div>`;
 }
 function showResultTab(tab){document.querySelectorAll('.result-tab').forEach(b=>b.classList.remove('active'));const btn=document.getElementById('resultTab'+tab.charAt(0).toUpperCase()+tab.slice(1));if(btn)btn.classList.add('active');const p=document.getElementById('resultPanel');if(!p)return;if(tab==='uin')p.innerHTML=resultUinPanel();else if(tab==='class')p.innerHTML=resultClassPanel();else if(tab==='batch')p.innerHTML=resultBatchPanel();else p.innerHTML=resultAveragePanel();if(tab==='average')toggleAnalysisInputs();loadResultOptions();}
@@ -2404,9 +2424,47 @@ function buildPrintableResultHtml(report){
 }
 function filterBatchChoices(q){const query=String(q||'').toLowerCase();document.querySelectorAll('#batchChoices .choice-pill').forEach(el=>{el.style.display=el.textContent.toLowerCase().includes(query)?'flex':'none';});}
 function handleResultDrop(ev){ev.preventDefault();ev.currentTarget.classList.remove('dragover');const f=ev.dataTransfer.files?.[0];if(f)handleResultFile(f)}
-function handleResultFile(file){if(!requireResultUploadAccess()||!file)return;const ext=(file.name.split('.').pop()||'').toLowerCase();if(!['csv','xlsx','xls'].includes(ext)){showToast('Please choose CSV or Excel result file');return;}if(ext==='csv'){const reader=new FileReader();reader.onload=()=>prepareResultImport(parseCsvText(reader.result),file.name);reader.readAsText(file);}else{if(typeof XLSX==='undefined'){showToast('Excel reader is unavailable.');return;}const reader=new FileReader();reader.onload=e=>{try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];prepareResultImport(XLSX.utils.sheet_to_json(ws,{defval:'',raw:false}),file.name);}catch(err){showToast('Could not read result Excel file: '+err.message)}};reader.readAsArrayBuffer(file);}}
+function handleResultFile(file){
+  if(!requireResultUploadAccess()||!file)return;
+  const uploadCategory=document.getElementById('resultUploadCategory')?.value||'';
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  if(!['csv','xlsx','xls'].includes(ext)){showToast('Please choose CSV or Excel result file');return;}
+  if(ext==='csv'){
+    const reader=new FileReader();
+    reader.onload=()=>prepareResultImport(parseCsvText(reader.result),file.name,uploadCategory);
+    reader.readAsText(file);
+  }else{
+    if(typeof XLSX==='undefined'){showToast('Excel reader is unavailable.');return;}
+    const reader=new FileReader();
+    reader.onload=e=>{try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      prepareResultImport(XLSX.utils.sheet_to_json(ws,{defval:'',raw:false}),file.name,uploadCategory);
+    }catch(err){showToast('Could not read result Excel file: '+err.message)}};
+    reader.readAsArrayBuffer(file);
+  }
+}
 function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_marks','mathematics_marks','maths'],Total_Marks:['total_marks','total','marks_total','score'],Max_Total_Marks:['max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
-function prepareResultImport(rawRows,fileName){const rows=normalizeResultRows(rawRows);const errors=[];const seen=new Set();rows.forEach((r,i)=>{if(!r.UIN)errors.push(`Row ${i+2}: UIN missing`);else if(!/^\d{10}$/.test(String(r.UIN).trim()))errors.push(`Row ${i+2}: UIN must be exactly 10 digits (found: ${String(r.UIN).trim()})`);if(!r.Exam_Name)errors.push(`Row ${i+2}: Exam_Name missing`);const key=String(r.UIN||'').trim().toUpperCase()+'|'+String(r.Exam_ID||r.Exam_Name).trim().toUpperCase()+'|'+String(r.Subject_Name||'').trim().toUpperCase();if(seen.has(key))errors.push(`Row ${i+2}: duplicate result key`);seen.add(key)});resultImportRows=rows;resultImportHeaders=[...new Set(rows.flatMap(r=>Object.keys(r)))];const el=document.getElementById('resultImportPreview');if(!el)return;el.innerHTML=`<div class="import-preview"><div class="section-title" style="margin:0 0 10px"><div><b>${escapeHtml(fileName)}</b><div class="muted">${rows.length.toLocaleString()} records</div></div><span class="badge ${errors.length?'badge-red':'badge-green'}">${errors.length?errors.length+' errors':'Ready to import'}</span></div>${errors.length?`<div class="alert alert-danger">${errors.slice(0,8).map(escapeHtml).join('<br>')}</div>`:''}<div class="table-wrap"><table class="data-table"><thead><tr>${resultImportHeaders.slice(0,10).map(h=>`<th>${escapeHtml(h.replace(/^EXTRA_/,'').replace(/_/g,' '))}</th>`).join('')}</tr></thead><tbody>${rows.slice(0,8).map(r=>`<tr>${resultImportHeaders.slice(0,10).map(h=>`<td>${escapeHtml(r[h]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${!errors.length?`<div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" onclick="confirmResultImport('${escapeAttr(fileName)}')">Import ${rows.length.toLocaleString()} Results</button><button class="btn btn-secondary" onclick="document.getElementById('resultImportPreview').innerHTML=''">Cancel</button></div>`:''}</div>`}
+function prepareResultImport(rawRows,fileName,uploadCategory=''){
+  const rows=normalizeResultRows(rawRows);
+  const category=String(uploadCategory||'').trim();
+  const errors=[];
+  const seen=new Set();
+  rows.forEach((r,i)=>{
+    if(category) r.Category_Name=category;
+    if(!r.UIN)errors.push(`Row ${i+2}: UIN missing`);
+    else if(!/^\d{10}$/.test(String(r.UIN).trim()))errors.push(`Row ${i+2}: UIN must be exactly 10 digits (found: ${String(r.UIN).trim()})`);
+    if(!r.Exam_Name)errors.push(`Row ${i+2}: Exam_Name missing`);
+    const key=String(r.UIN||'').trim().toUpperCase()+'|'+String(r.Exam_ID||r.Exam_Name).trim().toUpperCase()+'|'+String(r.Subject_Name||'').trim().toUpperCase();
+    if(seen.has(key))errors.push(`Row ${i+2}: duplicate result key`);
+    seen.add(key);
+  });
+  resultImportRows=rows;
+  resultImportHeaders=[...new Set(rows.flatMap(r=>Object.keys(r)))];
+  const el=document.getElementById('resultImportPreview');
+  if(!el)return;
+  el.innerHTML=`<div class="import-preview"><div class="section-title" style="margin:0 0 10px"><div><b>${escapeHtml(fileName)}</b><div class="muted">${rows.length.toLocaleString()} records${category?` • ${escapeHtml(category)} upload scope`:''}</div></div><span class="badge ${errors.length?'badge-red':'badge-green'}">${errors.length?errors.length+' errors':'Ready to import'}</span></div>${errors.length?`<div class="alert alert-danger">${errors.slice(0,8).map(escapeHtml).join('<br>')}</div>`:''}<div class="table-wrap"><table class="data-table"><thead><tr>${resultImportHeaders.slice(0,16).map(h=>`<th>${escapeHtml(h.replace(/^EXTRA_/,'').replace(/_/g,' '))}</th>`).join('')}</tr></thead><tbody>${rows.slice(0,8).map(r=>`<tr>${resultImportHeaders.slice(0,16).map(h=>`<td>${escapeHtml(r[h]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${!errors.length?`<div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" onclick="confirmResultImport('${escapeAttr(fileName)}')">Import ${rows.length.toLocaleString()} Results</button><button class="btn btn-secondary" onclick="document.getElementById('resultImportPreview').innerHTML=''">Cancel</button></div>`:''}</div>`;
+}
 function confirmResultImport(fileName) {
   if (!state.resultUploadProof) {
     showToast('Please unlock Result Upload again.');
@@ -2452,7 +2510,7 @@ function confirmResultImport(fileName) {
       .importResults(
         state.session.token,
         proof,
-        {rows: rowsToImport, sourceFile: fileName}
+        {rows: rowsToImport, sourceFile: fileName, uploadCategory: document.getElementById('resultUploadCategory')?.value||''}
       );
   } else {
     showToast('Result import requires the Google Sheets backend.');
