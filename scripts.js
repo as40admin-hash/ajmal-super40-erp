@@ -1048,12 +1048,15 @@ function facultyAssignmentsForBatch_(batchId){
 
 function facultyClassSubjectAssignments_(){
   const order=['Physics','Chemistry','Botany','Zoology','Mathematics','English','MIL','Others'];
-  const cat=state.facultyCategoryFilter||'';
-  const cls=state.facultyClassFilter||'';
-  const campus=state.facultyCampusFilter||'';
-  const batchRows=facultyFilteredBatches_();
-  const batchIds=new Set(batchRows.map(b=>String(b.Batch_ID||'').trim()).filter(Boolean));
+  const cat=String(state.facultyCategoryFilter||'').trim();
+  const cls=String(state.facultyClassFilter||'').trim();
+  const campus=String(state.facultyCampusFilter||'').trim();
+  if(!cat||!cls||!campus) return [];
+
   const assignments=state.facultyOptions.assignments||[];
+  const batchIndex=new Map((state.data.batches||[]).map(b=>[
+    String(b.Batch_ID||'').trim(), b
+  ]));
   const facultyMap=new Map((state.facultyOptions.faculties||[]).map(f=>[
     String(f.Faculty_ID||'').trim(),
     {
@@ -1061,37 +1064,61 @@ function facultyClassSubjectAssignments_(){
       initials:String(f.Initials||f.Abbreviation||'').trim()
     }
   ]));
+
+  const norm=v=>String(v||'').trim().toLowerCase().replace(/\s+/g,' ');
   const rows=[];
-  assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE').forEach(a=>{
-    const bid=String(a.Batch_ID||'').trim();
-    if(!batchIds.has(bid)) return;
-    const subject=String(a.Subject_Name||a.Subject||'').trim();
-    const facultyId=String(a.Faculty_ID||'').trim();
-    if(!subject||!facultyId) return;
-    const b=batchRows.find(x=>String(x.Batch_ID||'').trim()===bid)||{};
-    const meta=facultyMap.get(facultyId)||{};
-    const facultyName=meta.name||String(a.Faculty_Name||a.Teacher_Name||'').trim();
-    const initials=meta.initials||String(a.Initials||a.Abbreviation||'').trim();
-    const key=[facultyId.toUpperCase(),subject.toLowerCase(),String(b.Campus_Name||campus).trim().toLowerCase(),String(b.Class_Name||cls).trim().toLowerCase()].join('|');
-    if(rows.some(x=>x.key===key)) return;
-    rows.push({
-      key,facultyId,facultyName,subject,initials,
-      batchId:bid,
-      assignmentId:String(a.Assignment_ID||''),
-      scopeType:'CLASS',
-      className:cls,
-      campusName:campus,
-      categoryName:cat
+  const seen=new Set();
+
+  assignments
+    .filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE')
+    .forEach(a=>{
+      const bid=String(a.Batch_ID||'').trim();
+      const b=batchIndex.get(bid)||{};
+      const assignmentCategory=String(a.Category_Name||b.Category_Name||b.Category||'').trim();
+      const assignmentClass=String(a.Class_Name||b.Class_Name||classFromBatch_(b)||'').trim();
+      const assignmentCampus=String(a.Campus_Name||b.Campus_Name||b.Campus||'').trim();
+
+      // Class-level attendance is intentionally driven by the assignment's resolved
+      // Campus/Class metadata, not by whether its Batch_ID can still be found in the
+      // current UI batch list. This keeps Faculty Master class/campus assignments
+      // visible even when a batch was renamed/rebuilt.
+      if(norm(assignmentCategory)!==norm(cat)) return;
+      if(norm(assignmentClass)!==norm(cls)) return;
+      if(norm(assignmentCampus)!==norm(campus)) return;
+
+      const subject=String(a.Subject_Name||a.Subject||'').trim();
+      const facultyId=String(a.Faculty_ID||'').trim();
+      if(!subject||!facultyId) return;
+
+      const key=[facultyId.toUpperCase(),subject.toLowerCase(),norm(campus),norm(cls),norm(cat)].join('|');
+      if(seen.has(key)) return;
+      seen.add(key);
+
+      const meta=facultyMap.get(facultyId)||{};
+      rows.push({
+        key,
+        facultyId,
+        facultyName:meta.name||String(a.Faculty_Name||a.Teacher_Name||'').trim(),
+        subject,
+        initials:meta.initials||String(a.Initials||a.Abbreviation||'').trim(),
+        batchId:bid,
+        assignmentId:String(a.Assignment_ID||''),
+        scopeType:'CLASS',
+        className:cls,
+        campusName:campus,
+        categoryName:cat
+      });
     });
-  });
+
   return rows.sort((a,b)=>{
     const ia=order.findIndex(x=>x.toLowerCase()===a.subject.toLowerCase());
     const ib=order.findIndex(x=>x.toLowerCase()===b.subject.toLowerCase());
     if(ia!==ib)return (ia<0?999:ia)-(ib<0?999:ib);
-    return a.subject.localeCompare(b.subject,undefined,{numeric:true,sensitivity:'base'}) ||
-      a.facultyName.localeCompare(b.facultyName,undefined,{numeric:true,sensitivity:'base'});
+    return a.facultyName.localeCompare(b.facultyName,undefined,{numeric:true,sensitivity:'base'}) ||
+      a.subject.localeCompare(b.subject,undefined,{numeric:true,sensitivity:'base'});
   });
 }
+
 function facultyFilteredBatches_(){
   return facultyFilteredBatches();
 }
