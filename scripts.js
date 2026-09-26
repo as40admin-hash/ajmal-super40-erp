@@ -990,7 +990,7 @@ function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(
 function facultyBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function facultyBatches(){
   const branch=facultyBranch();
-  const assignedCampus=attendanceOperatorUser()?assignedCampusName_():'';
+  const assignedCampus=campusRestrictedUser()?assignedCampusName_():'';
   return (state.data.batches||[]).filter(b=>(branch==='ALL'||String(b.Branch_ID||'BR001')===branch) && (!assignedCampus || String(b.Campus_Name||b.Campus||'').trim()===assignedCampus)).sort((a,b)=>String(a.Batch_Code||a.Batch_Name||'').localeCompare(String(b.Batch_Code||b.Batch_Name||''),undefined,{numeric:true}));
 }
 function facultyCategories(){
@@ -1045,6 +1045,57 @@ function facultyAssignmentsForBatch_(batchId){
   const assignments=state.facultyOptions.assignments||[];
   return assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE' && String(a.Batch_ID||'')===String(batchId));
 }
+
+function facultyClassSubjectAssignments_(){
+  const order=['Physics','Chemistry','Botany','Zoology','Mathematics','English','MIL','Others'];
+  const cat=state.facultyCategoryFilter||'';
+  const cls=state.facultyClassFilter||'';
+  const campus=state.facultyCampusFilter||'';
+  const batchRows=facultyFilteredBatches_();
+  const batchIds=new Set(batchRows.map(b=>String(b.Batch_ID||'').trim()).filter(Boolean));
+  const assignments=state.facultyOptions.assignments||[];
+  const facultyMap=new Map((state.facultyOptions.faculties||[]).map(f=>[
+    String(f.Faculty_ID||'').trim(),
+    {
+      name:String(f.Faculty_Name||f.Teacher_Name||'').trim(),
+      initials:String(f.Initials||f.Abbreviation||'').trim()
+    }
+  ]));
+  const rows=[];
+  assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE').forEach(a=>{
+    const bid=String(a.Batch_ID||'').trim();
+    if(!batchIds.has(bid)) return;
+    const subject=String(a.Subject_Name||a.Subject||'').trim();
+    const facultyId=String(a.Faculty_ID||'').trim();
+    if(!subject||!facultyId) return;
+    const b=batchRows.find(x=>String(x.Batch_ID||'').trim()===bid)||{};
+    const meta=facultyMap.get(facultyId)||{};
+    const facultyName=meta.name||String(a.Faculty_Name||a.Teacher_Name||'').trim();
+    const initials=meta.initials||String(a.Initials||a.Abbreviation||'').trim();
+    const key=[facultyId.toUpperCase(),subject.toLowerCase(),String(b.Campus_Name||campus).trim().toLowerCase(),String(b.Class_Name||cls).trim().toLowerCase()].join('|');
+    if(rows.some(x=>x.key===key)) return;
+    rows.push({
+      key,facultyId,facultyName,subject,initials,
+      batchId:bid,
+      assignmentId:String(a.Assignment_ID||''),
+      scopeType:'CLASS',
+      className:cls,
+      campusName:campus,
+      categoryName:cat
+    });
+  });
+  return rows.sort((a,b)=>{
+    const ia=order.findIndex(x=>x.toLowerCase()===a.subject.toLowerCase());
+    const ib=order.findIndex(x=>x.toLowerCase()===b.subject.toLowerCase());
+    if(ia!==ib)return (ia<0?999:ia)-(ib<0?999:ib);
+    return a.subject.localeCompare(b.subject,undefined,{numeric:true,sensitivity:'base'}) ||
+      a.facultyName.localeCompare(b.facultyName,undefined,{numeric:true,sensitivity:'base'});
+  });
+}
+function facultyFilteredBatches_(){
+  return facultyFilteredBatches();
+}
+
 function facultySubjectAssignments_(batchId){
   const order=['Physics','Chemistry','Botany','Zoology','Mathematics','English','MIL','Others'];
   const facultyMap=new Map((state.facultyOptions.faculties||[]).map(f=>[
@@ -1090,15 +1141,25 @@ function facultyFixedSubject_(subject){return ['Physics','Chemistry'].some(x=>x.
 function facultyInitialsForAssignment_(assignment){return String(assignment?.initials||'').trim()||'—';}
 function findFacultyAttendance_(batchId,assignment){
   const dateKey=normalizeDateKey_(state.date);
-  const rows=(state.facultyAttendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===dateKey && String(a.Batch_ID||'')===String(batchId));
+  const rows=(state.facultyAttendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===dateKey);
+  const classScope=String(assignment?.scopeType||'').toUpperCase()==='CLASS';
   return rows.find(a=>{
     const fid=String(a.Faculty_ID||'').trim();
     const subj=String(a.Subject_Name||a.Subject||'').trim().toLowerCase();
-    if(fid && assignment.facultyId) return fid===assignment.facultyId && subj===assignment.subject.toLowerCase();
-    const ini=String(a.Initials||a.Abbreviation||'').trim();
-    return subj===assignment.subject.toLowerCase() && ini===assignment.initials;
+    if(fid!==String(assignment?.facultyId||'').trim()) return false;
+    if(subj!==String(assignment?.subject||'').trim().toLowerCase()) return false;
+
+    if(classScope){
+      return String(a.Attendance_Scope||'').toUpperCase()==='CLASS' &&
+        String(a.Class_Name||'').trim().toLowerCase()===String(assignment.className||'').trim().toLowerCase() &&
+        String(a.Campus_Name||'').trim().toLowerCase()===String(assignment.campusName||'').trim().toLowerCase();
+    }
+
+    return String(a.Batch_ID||'')===String(batchId||'');
   })||{};
 }
+
+
 function loadFacultyAttendanceOptions(){
   if(!facultyAllowed())return;
   if(isGAS()){
@@ -1112,25 +1173,101 @@ function renderFacultyAttendanceOnly(){
 }
 function facultyAttendanceHTML(){
   if(!facultyAllowed()) return '<div class="card"><b>Attendance operator authorization required.</b></div>';
+
   const superAdmin=isSuperAdmin();
   if(!superAdmin) state.branchFilter=String(state.session.user?.Branch_ID||'BR001');
-  if(attendanceOperatorUser()) state.facultyCampusFilter=assignedCampusName_();
+  if(campusRestrictedUser()) state.facultyCampusFilter=assignedCampusName_();
+
   const categories=facultyCategories();
   const category=state.facultyCategoryFilter||'';
   if(category && !categories.includes(category)) facultyResetDownstream(0);
+
   const classes=category?facultyClasses():[];
   const cls=state.facultyClassFilter||'';
   if(cls && !classes.includes(cls)) facultyResetDownstream(1);
+
   const campuses=(category&&cls)?facultyCampuses():[];
   const campus=state.facultyCampusFilter||'';
   if(campus && !campuses.includes(campus)) facultyResetDownstream(2);
+
   const batches=(category&&cls&&campus)?facultyFilteredBatches():[];
   const currentBatch=state.facultyBatchFilter||'';
   if(currentBatch && !batches.some(b=>facultyBatchValue_(b)===String(currentBatch))) facultyResetDownstream(3);
-  const assignmentRows=currentBatch?facultySubjectAssignments_(currentBatch):[];
+
+  // When Batch is left blank after Campus + Class are selected, class-scope
+  // attendance becomes the default marking view.
+  const classScope=!!(category&&cls&&campus&&!currentBatch);
+  const assignmentRows=classScope
+    ? facultyClassSubjectAssignments_()
+    : (currentBatch?facultySubjectAssignments_(currentBatch):[]);
+
   const statuses=['Early Arrival','On Time Arrival','Late Arrival by 5–10 Minutes','Late by More Than 15 Minutes','More Than 30 Minutes Late','Absent','Others'];
-  const savedCount=assignmentRows.filter(a=>findFacultyAttendance_(currentBatch,a).Attendance_Status).length;
-  return `<div class="card faculty-attendance-entry"><div class="section-title" style="margin-top:0"><div><h2 style="margin:0">Faculty / Teacher Attendance</h2><div class="muted">Daily arrival status is generated from every Faculty Master Batch/Batches assignment: Batch → Faculty / Teacher → Subject → Initials / Abbreviation → Status.</div></div><span class="badge badge-blue">${superAdmin?'All Branches':'Branch Restricted'}</span></div><div class="toolbar attendance-filters" style="margin:12px 0"><input class="input" type="date" value="${escapeAttr(state.date)}" onchange="state.date=this.value;state.facultyAttendanceDirty=false;loadFacultyAttendanceOptions()">${superAdmin?`<select class="select" onchange="state.branchFilter=this.value;facultyResetDownstream(0);loadFacultyAttendanceOptions()"><option value="ALL">Select branch</option>${branchOptionsHtml(facultyBranch())}</select>`:`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Branch_Name||'Assigned Branch')}</div>`}<select class="select" onchange="state.facultyCategoryFilter=this.value;facultyResetDownstream(1);renderFacultyAttendanceOnly()"><option value="">Select category</option>${categories.map(c=>`<option value="${escapeAttr(c)}" ${category===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><select class="select" ${!category?'disabled':''} onchange="state.facultyClassFilter=this.value;facultyResetDownstream(2);renderFacultyAttendanceOnly()"><option value="">${category?'Select class':'Select category first'}</option>${category?classes.map(c=>`<option value="${escapeAttr(c)}" ${cls===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><select class="select" ${(!category||!cls)?'disabled':''} onchange="state.facultyCampusFilter=this.value;facultyResetDownstream(3);renderFacultyAttendanceOnly()"><option value="">${category&&cls?'Select campus':'Select class first'}</option>${category&&cls?campuses.map(c=>`<option value="${escapeAttr(c)}" ${campus===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><select class="select" ${(!category||!cls||!campus)?'disabled':''} onchange="state.facultyBatchFilter=this.value;renderFacultyAttendanceOnly()"><option value="">${category&&cls&&campus?'Select batch':'Select campus first'}</option>${category&&cls&&campus?batches.map(b=>{const value=facultyBatchValue_(b);return `<option value="${escapeAttr(value)}" ${String(currentBatch)===value?'selected':''}>${escapeHtml(b.__displayBatchName)}</option>`}).join(''):''}</select><button class="btn btn-secondary" onclick="switchAttendanceMode('student')">Back to Student Attendance</button></div>${currentBatch?`<div class="grid grid-3" style="margin-bottom:14px">${metricCard('Assigned Entries',assignmentRows.length,'Subject + Initials mappings','blue')}${metricCard('Saved',savedCount,'Saved attendance entries','green')}${metricCard('Pending',Math.max(0,assignmentRows.length-savedCount),'Not yet saved','yellow')}</div><div class="table-wrap"><table class="data-table"><thead><tr><th>Faculty / Teacher</th><th>Subject</th><th>Initials / Abbreviation</th><th>Arrival / Attendance Status</th><th>Remarks</th><th>Saved At</th></tr></thead><tbody>${assignmentRows.length?assignmentRows.map(a=>{const rec=findFacultyAttendance_(currentBatch,a);return `<tr><td><b>${escapeHtml(a.facultyName||'—')}</b><div class="muted small">${escapeHtml(a.facultyId||'')}</div></td><td><span class="badge badge-blue">${escapeHtml(a.subject)}</span></td><td><span class="badge badge-purple">${escapeHtml(facultyInitialsForAssignment_(a))}</span></td><td><select class="select faculty-att-status" data-assignment="${escapeAttr(a.key)}" data-subject="${escapeAttr(a.subject)}" data-faculty-id="${escapeAttr(a.facultyId)}"><option value="">Select status</option>${statuses.concat(facultyFixedSubject_(a.subject)?[]:['Not Applicable']).map(st=>`<option value="${escapeAttr(st)}" ${String(rec.Attendance_Status||'')===st?'selected':''}>${escapeHtml(st)}</option>`).join('')}</select></td><td><input class="input faculty-att-remark" data-assignment="${escapeAttr(a.key)}" value="${escapeAttr(rec.Remarks||'')}" placeholder="Required only for Others" ${String(rec.Attendance_Status||'')==='Others'?'':'disabled'}></td><td class="muted">${rec.Marked_At?escapeHtml(formatDateTime_(rec.Marked_At)):'—'}</td></tr>`}).join(''):`<tr><td colspan="6" class="muted center">No Faculty Master assignments found for the selected batch.</td></tr>`}</tbody></table></div><div class="toolbar" style="margin-top:12px;justify-content:flex-end"><span class="muted" id="facultyAttendanceSaveStamp">Last save: ${escapeHtml(state.facultyLastSavedAt||'Not saved')} • Auto-save every 30 sec</span><button class="btn btn-primary" onclick="saveFacultyAttendance()">Save Attendance</button></div>`:'<div class="alert">Select Branch, Category, Class, Campus and Batch to load Faculty Master subject/initial mappings.</div>'}</div>${facultyLiveAttendanceHTML()}`;
+  const savedCount=assignmentRows.filter(a=>findFacultyAttendance_(classScope?'':currentBatch,a).Attendance_Status).length;
+
+  const currentScopeLabel=classScope
+    ? `${escapeHtml(category)} • ${escapeHtml(cls)} • ${escapeHtml(campus)} • All assigned batches`
+    : `${escapeHtml(category)} • ${escapeHtml(cls)} • ${escapeHtml(campus)} • ${escapeHtml(batches.find(x=>facultyBatchValue_(x)===currentBatch)?.__displayBatchName||'Selected batch')}`;
+
+  return `<div class="card faculty-attendance-entry">
+    <div class="section-title" style="margin-top:0">
+      <div>
+        <h2 style="margin:0">Faculty / Teacher Attendance</h2>
+        <div class="muted">Select the assigned Campus and Class to mark all faculty assigned within that campus/class. Batch remains optional for a more specific batch-level view.</div>
+      </div>
+      <span class="badge badge-blue">${superAdmin?'All Branches':'Campus Restricted'}</span>
+    </div>
+
+    <div class="toolbar attendance-filters" style="margin:12px 0">
+      <input class="input" type="date" value="${escapeAttr(state.date)}" onchange="state.date=this.value;state.facultyAttendanceDirty=false;loadFacultyAttendanceOptions()">
+      ${superAdmin?`<select class="select" onchange="state.branchFilter=this.value;facultyResetDownstream(0);loadFacultyAttendanceOptions()"><option value="ALL">Select branch</option>${branchOptionsHtml(facultyBranch())}</select>`:`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Branch_Name||'Assigned Branch')}</div>`}
+      <select class="select" onchange="state.facultyCategoryFilter=this.value;facultyResetDownstream(1);renderFacultyAttendanceOnly()">
+        <option value="">Select category</option>${categories.map(c=>`<option value="${escapeAttr(c)}" ${category===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
+      </select>
+      <select class="select" ${!category?'disabled':''} onchange="state.facultyClassFilter=this.value;facultyResetDownstream(2);renderFacultyAttendanceOnly()">
+        <option value="">${category?'Select class':'Select category first'}</option>${category?classes.map(c=>`<option value="${escapeAttr(c)}" ${cls===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}
+      </select>
+      <select class="select" ${(!category||!cls)?'disabled':''} onchange="state.facultyCampusFilter=this.value;facultyResetDownstream(3);renderFacultyAttendanceOnly()">
+        <option value="">${category&&cls?'Select campus':'Select class first'}</option>${category&&cls?campuses.map(c=>`<option value="${escapeAttr(c)}" ${campus===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}
+      </select>
+      <select class="select" ${(!category||!cls||!campus)?'disabled':''} onchange="state.facultyBatchFilter=this.value;renderFacultyAttendanceOnly()">
+        <option value="">${category&&cls&&campus?'All assigned faculty in selected class':'Select campus first'}</option>
+        ${category&&cls&&campus?batches.map(b=>{const value=facultyBatchValue_(b);return `<option value="${escapeAttr(value)}" ${String(currentBatch)===value?'selected':''}>${escapeHtml(b.__displayBatchName)}</option>`}).join(''):''}
+      </select>
+      <button class="btn btn-secondary" onclick="switchAttendanceMode('student')">Back to Student Attendance</button>
+    </div>
+
+    ${assignmentRows.length?`
+      <div class="muted small" style="margin-bottom:10px">${currentScopeLabel}</div>
+      <div class="grid grid-3" style="margin-bottom:14px">
+        ${metricCard('Assigned Entries',assignmentRows.length,'Faculty + Subject mappings','blue')}
+        ${metricCard('Saved',savedCount,'Saved attendance entries','green')}
+        ${metricCard('Pending',Math.max(0,assignmentRows.length-savedCount),'Not yet saved','yellow')}
+      </div>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Faculty / Teacher</th><th>Subject</th><th>Initials / Abbreviation</th><th>Arrival / Attendance Status</th><th>Remarks</th><th>Saved At</th></tr></thead>
+        <tbody>
+          ${assignmentRows.map(a=>{
+            const rec=findFacultyAttendance_(classScope?'':currentBatch,a);
+            return `<tr>
+              <td><b>${escapeHtml(a.facultyName||'—')}</b><div class="muted small">${escapeHtml(a.facultyId||'')}</div></td>
+              <td><span class="badge badge-blue">${escapeHtml(a.subject)}</span></td>
+              <td><span class="badge badge-purple">${escapeHtml(facultyInitialsForAssignment_(a))}</span></td>
+              <td><select class="select faculty-att-status" data-assignment="${escapeAttr(a.key)}" data-batch-id="${escapeAttr(a.batchId||'')}" data-scope-type="${escapeAttr(classScope?'CLASS':'BATCH')}" data-subject="${escapeAttr(a.subject)}" data-faculty-id="${escapeAttr(a.facultyId)}">
+                <option value="">Select status</option>
+                ${statuses.concat(facultyFixedSubject_(a.subject)?[]:['Not Applicable']).map(st=>`<option value="${escapeAttr(st)}" ${String(rec.Attendance_Status||'')===st?'selected':''}>${escapeHtml(st)}</option>`).join('')}
+              </select></td>
+              <td><input class="input faculty-att-remark" data-assignment="${escapeAttr(a.key)}" value="${escapeAttr(rec.Remarks||'')}" placeholder="Required only for Others" ${String(rec.Attendance_Status||'')==='Others'?'':'disabled'}></td>
+              <td class="muted">${rec.Marked_At?escapeHtml(formatDateTime_(rec.Marked_At)):'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table></div>
+      <div class="toolbar" style="margin-top:12px;justify-content:flex-end">
+        <span class="muted" id="facultyAttendanceSaveStamp">Last save: ${escapeHtml(state.facultyLastSavedAt||'Not saved')} • Auto-save every 30 sec</span>
+        <button class="btn btn-primary" onclick="saveFacultyAttendance()">Save Attendance</button>
+      </div>
+    `:`<div class="alert">${category&&cls&&campus?'No Faculty Master assignments were found for this campus/class.':'Select Branch, Category, Class and Campus. Batch selection is optional.'}</div>`}
+  </div>${facultyLiveAttendanceHTML()}`;
 }
 
 function facultyLiveAttendanceRows(){
@@ -1138,39 +1275,95 @@ function facultyLiveAttendanceRows(){
   const batches=state.data.batches||[];
   const batchIndex=new Map();
   batches.forEach(b=>{
-    const keys=[b.Batch_ID,b.Batch_Code,b.Batch_Name,b['Batch Name'],b.Batch,b['Batch/Batches'],b.Batch_Batches].filter(v=>String(v??'').trim()).map(v=>String(v).trim());
-    keys.forEach(k=>{ if(!batchIndex.has(k)) batchIndex.set(k,b); });
+    const keys=[b.Batch_ID,b.Batch_Code,b.Batch_Name,b['Batch Name'],b.Batch,b['Batch/Batches'],b.Batch_Batches]
+      .filter(v=>String(v??'').trim()).map(v=>String(v).trim());
+    keys.forEach(k=>{if(!batchIndex.has(k))batchIndex.set(k,b);});
   });
+
   const assignedCampus=assignedCampusName_().toLowerCase();
   const branch=String(facultyBranch()||'').trim();
+
   const records=(state.facultyAttendance||[]).filter(a=>{
     if(normalizeDateKey_(a.Attendance_Date||'')!==dateKey) return false;
     if(!String(a.Attendance_Status||'').trim()) return false;
-    if(!attendanceOperatorUser()) return true;
+    if(!campusRestrictedUser() && !attendanceOperatorUser()) return true;
+
     const b=batchIndex.get(String(a.Batch_ID||'').trim()) || batchIndex.get(String(a.Batch_Code||'').trim()) || {};
     const rowBranch=String(a.Branch_ID||b.Branch_ID||'').trim();
     const rowCampus=String(a.Campus_Name||a.Campus||b.Campus_Name||b.Campus||'').trim().toLowerCase();
+
     if(branch && branch!=='ALL' && rowBranch!==branch) return false;
     if(assignedCampus && rowCampus!==assignedCampus) return false;
     return true;
   });
-  const fmap=new Map((state.facultyOptions.faculties||[]).map(f=>[String(f.Faculty_ID||'').trim(),String(f.Initials||f.Abbreviation||'').trim()]));
+
+  const fmap=new Map((state.facultyOptions.faculties||[]).map(f=>[
+    String(f.Faculty_ID||'').trim(),
+    {
+      name:String(f.Faculty_Name||f.Teacher_Name||'').trim(),
+      initials:String(f.Initials||f.Abbreviation||'').trim()
+    }
+  ]));
+
   return records.map(a=>{
     const b=batchIndex.get(String(a.Batch_ID||'').trim()) || batchIndex.get(String(a.Batch_Code||'').trim()) || {};
     const subject=String(a.Subject_Name||a.Subject||'').trim()||'—';
-    const initials=fmap.get(String(a.Faculty_ID||'').trim())||String(a.Initials||a.Abbreviation||'').trim()||'—';
-    return {category:String(b.Category_Name||b.Category||'').trim()||'—',cls:classFromBatch_(b)||'—',campus:String(b.Campus_Name||b.Campus||'').trim()||'—',batchName:facultyMatrixBatchName_(b)||String(a.Batch_Name||a.Batch_Code||a.Batch_ID||'').trim()||'—',batchId:String(a.Batch_ID||b.Batch_ID||''),branchId:String(a.Branch_ID||b.Branch_ID||''),branchName:String(a.Branch_Name||b.Branch_Name||'').trim(),subject,initials,status:String(a.Attendance_Status||'').trim(),remarks:String(a.Remarks||'').trim(),markedAt:a.Marked_At||a.Updated_At||'',facultyId:String(a.Faculty_ID||'').trim()};
-  }).sort((a,b)=>String(a.batchName).localeCompare(String(b.batchName),undefined,{numeric:true,sensitivity:'base'}) || a.subject.localeCompare(b.subject,undefined,{sensitivity:'base'}) || a.initials.localeCompare(b.initials,undefined,{sensitivity:'base'}));
+    const meta=fmap.get(String(a.Faculty_ID||'').trim())||{};
+    const initials=meta.initials||String(a.Initials||a.Abbreviation||'').trim()||'—';
+    const classScope=String(a.Attendance_Scope||'').trim().toUpperCase()==='CLASS';
+    const rowCampus=String(a.Campus_Name||b.Campus_Name||'').trim()||'—';
+    const rowClass=String(a.Class_Name||b.Class_Name||deriveClassFromCategory_(a.Category_Name||b.Category_Name)||'').trim()||'—';
+
+    return {
+      category:String(a.Category_Name||b.Category_Name||b.Category||'').trim()||'—',
+      cls:rowClass,
+      campus:rowCampus,
+      batchName:classScope?'All assigned batches':(facultyMatrixBatchName_(b)||String(a.Batch_Name||a.Batch_Code||a.Batch_ID||'').trim()||'—'),
+      batchId:String(a.Batch_ID||b.Batch_ID||''),
+      branchId:String(a.Branch_ID||b.Branch_ID||''),
+      branchName:String(a.Branch_Name||b.Branch_Name||'').trim(),
+      facultyName:meta.name||String(a.Faculty_Name||'').trim()||'—',
+      subject,
+      initials,
+      status:String(a.Attendance_Status||'').trim(),
+      remarks:String(a.Remarks||'').trim(),
+      markedAt:a.Marked_At||a.Updated_At||'',
+      facultyId:String(a.Faculty_ID||'').trim(),
+      scopeType:classScope?'CLASS':'BATCH'
+    };
+  }).sort((a,b)=>
+    String(a.campus).localeCompare(String(b.campus),undefined,{numeric:true,sensitivity:'base'}) ||
+    String(a.cls).localeCompare(String(b.cls),undefined,{numeric:true,sensitivity:'base'}) ||
+    String(a.batchName).localeCompare(String(b.batchName),undefined,{numeric:true,sensitivity:'base'}) ||
+    a.subject.localeCompare(b.subject,undefined,{sensitivity:'base'}) ||
+    a.initials.localeCompare(b.initials,undefined,{sensitivity:'base'})
+  );
 }
+
 function openFacultyLiveAttendance(index){
-  const rows=facultyLiveAttendanceRows();const row=rows[index];if(!row)return;
+  const rows=facultyLiveAttendanceRows();
+  const row=rows[index];
+  if(!row)return;
+
   state.branchFilter=row.branchId||facultyBranch();
-  state.facultyCategoryFilter=row.category==='—'?'':row.category;state.facultyClassFilter=row.cls==='—'?'':row.cls;state.facultyCampusFilter=row.campus==='—'?'':row.campus;
-  const batches=facultyFilteredBatches();
-  const match=batches.find(b=>facultyMatrixBatchName_(b)===row.batchName)||batches.find(b=>String(b.Batch_ID||'')===row.batchId)||batches[0];
-  state.facultyBatchFilter=match?facultyBatchValue_(match):row.batchId;
-  renderFacultyAttendanceOnly();setTimeout(()=>document.querySelector('.faculty-attendance-entry')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+  state.facultyCategoryFilter=row.category==='—'?'':row.category;
+  state.facultyClassFilter=row.cls==='—'?'':row.cls;
+  state.facultyCampusFilter=row.campus==='—'?'':row.campus;
+
+  if(row.scopeType==='CLASS'){
+    state.facultyBatchFilter='';
+  }else{
+    const batches=facultyFilteredBatches();
+    const match=batches.find(b=>facultyMatrixBatchName_(b)===row.batchName) ||
+      batches.find(b=>String(b.Batch_ID||'')===row.batchId) ||
+      batches[0];
+    state.facultyBatchFilter=match?facultyBatchValue_(match):row.batchId;
+  }
+
+  renderFacultyAttendanceOnly();
+  setTimeout(()=>document.querySelector('.faculty-attendance-entry')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
 }
+
 function facultyLiveAttendanceHTML(){
   const rows=facultyLiveAttendanceRows();
   const dateLabel=formatDate(state.date);
@@ -1192,54 +1385,129 @@ document.addEventListener('change',e=>{
   if(e.target?.classList?.contains('faculty-att-remark')) state.facultyAttendanceDirty=true;
 });
 function saveFacultyAttendance(silent=false){
+  const classScope=!state.facultyBatchFilter &&
+    !!state.facultyCategoryFilter &&
+    !!state.facultyClassFilter &&
+    !!state.facultyCampusFilter;
+
   const batchId=state.facultyBatchFilter||'';
-  if(!batchId){if(!silent)showToast('Select a batch first.');return;}
+  if(!classScope&&!batchId){
+    if(!silent)showToast('Select a class/campus for class-level marking or select a batch for batch-level marking.');
+    return;
+  }
+
   if(state._facultySaveInFlight) return;
-  const rows=[...document.querySelectorAll('.faculty-att-status')].map(s=>{const assignmentKey=s.dataset.assignment||'';const remark=document.querySelector(`.faculty-att-remark[data-assignment="${CSS.escape(assignmentKey)}"]`);return {status:s.value,remarks:remark?.value||'',batchId,subjectName:s.dataset.subject||'',facultyId:s.dataset.facultyId||'',assignmentKey,branchId:facultyBranch(),attendanceDate:state.date};}).filter(r=>String(r.status||'').trim() && String(r.status||'').trim()!=='Not Applicable');
-  const others=rows.filter(r=>r.status==='Others'); if(others.some(r=>!String(r.remarks||'').trim())){if(!silent)showToast('Remarks are mandatory when attendance status is Others.');return;}
-  if(!rows.length){if(!silent)showToast('Select at least one subject arrival status to save.');return;}
+
+  const rows=[...document.querySelectorAll('.faculty-att-status')].map(sel=>{
+    const assignmentKey=sel.dataset.assignment||'';
+    const remark=document.querySelector(`.faculty-att-remark[data-assignment="${CSS.escape(assignmentKey)}"]`);
+    return {
+      status:sel.value,
+      remarks:remark?.value||'',
+      batchId:sel.dataset.batchId||batchId,
+      subjectName:sel.dataset.subject||'',
+      facultyId:sel.dataset.facultyId||'',
+      assignmentKey,
+      attendanceDate:state.date
+    };
+  }).filter(r=>String(r.status||'').trim() && String(r.status||'').trim()!=='Not Applicable');
+
+  const others=rows.filter(r=>r.status==='Others');
+  if(others.some(r=>!String(r.remarks||'').trim())){
+    if(!silent)showToast('Remarks are mandatory when attendance status is Others.');
+    return;
+  }
+  if(!rows.length){
+    if(!silent)showToast('Select at least one subject arrival status to save.');
+    return;
+  }
+
+  const payload={
+    date:state.date,
+    batchId:classScope?'':batchId,
+    subjectRows:rows,
+    branchId:facultyBranch(),
+    scopeType:classScope?'CLASS':'BATCH',
+    categoryName:state.facultyCategoryFilter||'',
+    className:state.facultyClassFilter||'',
+    campusName:state.facultyCampusFilter||''
+  };
+
   if(isGAS()){
     state._facultySaveInFlight=true;
     if(!silent)showToast('Saving faculty attendance…');
     google.script.run.withSuccessHandler(res=>{
       state._facultySaveInFlight=false;
       state.facultyAttendanceDirty=false;
-      // The Daily Attendance page and Dashboard now share the same authoritative
-      // Faculty Attendance read path. Invalidate both cached views after every save.
       state.data.dashboardSnapshot=null;
       state.dashboardFacultyAttendance=null;
       state._dashboardLastRefreshAt=0;
       state.facultyLastSavedAt=res.savedAt||new Date().toISOString();
+
       const stamp=document.getElementById('facultyAttendanceSaveStamp');
       if(stamp)stamp.textContent='Last save: '+formatDateTime_(state.facultyLastSavedAt);
 
-      // Use the exact post-write server snapshot instead of starting a second
-      // bootstrap request that could race with an older in-flight read.
       const applied=applyAuthoritativeMutationResponse_(res,'attendance',!silent);
-      if(!applied && !silent) loadData({force:true,silent:true,preserveInputs:false});
+      if(!applied&&!silent)loadData({force:true,silent:true,preserveInputs:false});
 
       if(!silent){
-        showToast(`${res.saved||0} subject attendance records saved`);
+        showToast(`${res.saved||0} faculty attendance records saved`);
         refreshDashboardSnapshot(true);
         refreshDashboardFacultyAttendance_(true);
-      } else if(state.page==='dashboard'){
+        loadFacultyAttendanceOptions();
+      }else if(state.page==='dashboard'){
         refreshDashboardSnapshot(true);
         refreshDashboardFacultyAttendance_(true);
       }
     }).withFailureHandler(err=>{
       state._facultySaveInFlight=false;
       if(!silent)showToast(err.message||'Could not save faculty attendance');
-    }).saveFacultyAttendance(state.session.token,{date:state.date,batchId,subjectRows:rows,branchId:facultyBranch()});
-  } else {
-    let keep=[...(state.facultyAttendance||[])]; const savedAt=new Date().toISOString();
-    rows.forEach(r=>{const key=`${r.attendanceDate}|${r.branchId}|${r.batchId}|${r.facultyId}|${r.subjectName}`;const i=keep.findIndex(a=>String(a.Attendance_ID||'')===key);const rec={Attendance_ID:key,Attendance_Date:r.attendanceDate,Branch_ID:r.branchId,Batch_ID:r.batchId,Faculty_ID:r.facultyId,Subject_Name:r.subjectName,Attendance_Status:r.status,Remarks:r.remarks,Marked_By:state.session.user?.User_ID||'local',Marked_At:(i>=0?keep[i].Marked_At:savedAt),Updated_By:state.session.user?.User_ID||'local',Updated_At:savedAt};if(i>=0)keep[i]=rec;else keep.push(rec);});
-    state.facultyAttendance=keep;state.facultyAttendanceDirty=false;state.facultyLastSavedAt=savedAt;const stamp=document.getElementById('facultyAttendanceSaveStamp');if(stamp)stamp.textContent='Last save: '+formatDateTime_(savedAt);if(!silent){showToast(`${rows.length} subject attendance records saved locally`);renderFacultyAttendanceOnly();refreshDashboardSnapshot(true);}
+    }).saveFacultyAttendance(state.session.token,payload);
+  }else{
+    const keep=[...(state.facultyAttendance||[])];
+    const savedAt=new Date().toISOString();
+
+    rows.forEach(r=>{
+      const scope=classScope?'CLASS':'BATCH';
+      const key=classScope
+        ? `${r.attendanceDate}|${r.branchId}|CLASS|${state.facultyCampusFilter}|${state.facultyClassFilter}|${r.facultyId}|${r.subjectName}`
+        : `${r.attendanceDate}|${r.branchId}|${r.batchId}|${r.facultyId}|${r.subjectName}`;
+      const i=keep.findIndex(a=>String(a.Attendance_ID||'')===key);
+      const rec={
+        Attendance_ID:key,
+        Attendance_Date:r.attendanceDate,
+        Branch_ID:r.branchId,
+        Batch_ID:classScope?'':r.batchId,
+        Faculty_ID:r.facultyId,
+        Subject_Name:r.subjectName,
+        Attendance_Status:r.status,
+        Remarks:r.remarks,
+        Attendance_Scope:scope,
+        Class_Name:state.facultyClassFilter||'',
+        Campus_Name:state.facultyCampusFilter||'',
+        Category_Name:state.facultyCategoryFilter||'',
+        Marked_By:state.session.user?.User_ID||'local',
+        Marked_At:(i>=0?keep[i].Marked_At:savedAt),
+        Updated_By:state.session.user?.User_ID||'local',
+        Updated_At:savedAt
+      };
+      if(i>=0)keep[i]=rec;else keep.push(rec);
+    });
+
+    state.facultyAttendance=keep;
+    state.facultyAttendanceDirty=false;
+    state.facultyLastSavedAt=savedAt;
+    const stamp=document.getElementById('facultyAttendanceSaveStamp');
+    if(stamp)stamp.textContent='Last save: '+formatDateTime_(savedAt);
+    if(!silent)showToast(`${rows.length} faculty attendance records saved locally`);
+    renderFacultyAttendanceOnly();
   }
 }
+
 function startFacultyAutoSave(){
   if(window.__facultyAutoSaveTimer) clearInterval(window.__facultyAutoSaveTimer);
   window.__facultyAutoSaveTimer=setInterval(()=>{
-    if(state.page==='attendance'&&state.attendanceMode==='faculty'&&state.facultyBatchFilter&&document.querySelectorAll('.faculty-att-status').length){saveFacultyAttendance(true);}
+    if(state.page==='attendance'&&state.attendanceMode==='faculty'&&(state.facultyBatchFilter||(state.facultyClassFilter&&state.facultyCampusFilter))&&document.querySelectorAll('.faculty-att-status').length){saveFacultyAttendance(true);}
   },30000);
 }
 startFacultyAutoSave();
