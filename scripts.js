@@ -982,11 +982,11 @@ function switchAttendanceMode(mode){
   render();
   if(state.attendanceMode==='faculty')setTimeout(loadFacultyAttendanceOptions,0);
 }
-function facultyAllowed(){return ['Super Admin','Admin','Campus Admin','Attendance Operator'].includes(String(state.session.user?.Role||''));}
+function facultyAllowed(){return ['Super Admin','Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(String(state.session.user?.Role||''));}
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return r==='Campus Admin' || (!isSuperAdmin() && !!String(state.session.user?.Campus_ID||state.session.user?.Campus_Name||'').trim() && r!=='Attendance Operator');}
 function attendanceOperatorUser(){return String(state.session.user?.Role||'')==='Attendance Operator';}
 function assignedCampusName_(){return String(state.session.user?.Campus_Name||'').trim();}
-function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Campus Admin','Attendance Operator'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Campus Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
+function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Campus Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
 function facultyBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function facultyBatches(){
   const branch=facultyBranch();
@@ -1233,7 +1233,7 @@ function facultyAttendanceHTML(){
         <h2 style="margin:0">Faculty / Teacher Attendance</h2>
         <div class="muted">Select the assigned Campus and Class to mark all faculty assigned within that campus/class. Batch remains optional for a more specific batch-level view.</div>
       </div>
-      <span class="badge badge-blue">${superAdmin?'All Branches':'Campus Restricted'}</span>
+      <span class="badge badge-blue">${superAdmin?'All Branches':(String(state.session.user?.Role||'')==='Academic Admin'?'Branch Restricted':'Campus Restricted')}</span>
     </div>
 
     <div class="toolbar attendance-filters" style="margin:12px 0">
