@@ -1,5 +1,5 @@
 /*
- * Cloudflare Pages compatibility bridge.
+ * Cloudflare Pages compatibility bridge. updated
  * Keeps the existing ERP UI/business workflow code unchanged by providing
  * the same google.script.run chaining shape over the /api Pages Function.
  */
