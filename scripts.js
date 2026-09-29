@@ -2021,7 +2021,7 @@ function reportsHTML(){
     ['residence','Hosteller ↔ Day Scholar Report','Current and recorded residential-status conversions.','gold'],
     ['leftout','Left / Withdrawn Students','Students whose current master status is Left, Withdrawn, Inactive or Cancelled.','red'],
     ['exceptions','Attendance Exception Report','Absent, Leave, Sick and Not Marked students requiring attention.','green'],
-    ['faculty','Faculty / Teacher Attendance Report','Subject-wise daily faculty attendance records.','purple']
+    ['faculty','Faculty / Teacher Attendance Report','Daily faculty arrival-status records for the selected campus/class; batch is optional.','purple']
   ];
   return `<div class="section-title"><div><h2>Management Reports</h2><span class="muted">Generate live reports from the authorised branch data and current ERP records.</span></div></div>
   <div class="grid grid-4">${branches.map(br=>{const id=String(br.Branch_ID);const st=(state.data.students||[]).filter(s=>String(s.Branch_ID||'BR001')===id && !['left','inactive','withdrawn','cancelled'].includes(String(s.Overall_Status||'Active').toLowerCase()));const ba=reportScopedBatches().filter(b=>String(b.Branch_ID||'BR001')===id);const n=st.length||ba.reduce((x,b)=>x+Number(b.Expected_Strength||0),0);return `<div class="card branch-report-card"><div class="metric-label">${escapeHtml(br.Branch_Name)}</div><div class="metric">${n.toLocaleString()}</div><div class="small muted">${ba.length} batches</div></div>`}).join('')}</div>
@@ -2050,6 +2050,13 @@ function managementCampusName(row){
   const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(row.Batch_ID));
   return b?.Campus_Name||row.Campus||'';
 }
+function deriveClassFromCategoryClient_(value){
+  const u=String(value||'').trim().toUpperCase();
+  if(/\bCHALLENGERS?\b/.test(u)) return 'Challengers';
+  if(/\bXII\b|\bCLASS\s*12\b/.test(u)) return 'XII';
+  if(/\bXI\b|\bCLASS\s*11\b/.test(u)) return 'XI';
+  return '';
+}
 function managementBatchName(row){
   if(row.Batch_Code) return row.Batch_Code;
   const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(row.Batch_ID));
@@ -2061,6 +2068,28 @@ function generateManagementReport(type){
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
   const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
+
+  // Faculty attendance reports are generated from the authoritative
+  // Faculty_Attendance sheet on the backend. This avoids depending on the
+  // client bootstrap scope, which can legitimately omit rows for branch-scoped
+  // Admin sessions, and correctly handles CLASS-scope rows with no Batch_ID.
+  if(type==='faculty'){
+    const finish=report=>{
+      managementReportCache=report||{};
+      renderManagementReport('managementReportOutput',managementReportCache);
+    };
+    const fail=err=>showToast(err?.message||'Could not generate Faculty / Teacher Attendance Report');
+    const filters={campusName,className,batchCode,reportDate,branchId:facultyBranch()};
+    if(isGAS()){
+      showToast('Generating Faculty / Teacher Attendance Report…');
+      google.script.run.withSuccessHandler(finish).withFailureHandler(fail).getFacultyAttendanceReport(state.session.token,filters);
+    }else{
+      finish({ok:false,title:`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`,headers:['Date','Branch','Category','Class','Campus','Batch','Faculty','Subject','Initials / Abbreviation','Attendance Status','Remarks'],rows:[]});
+      showToast('Faculty / Teacher report is available only through the connected ERP deployment.');
+    }
+    return;
+  }
+
   const students=currentScopedStudents({campusName,className,batchCode});
   const att=state.data.attendance||[];
   const mov=state.data.movements||[];
@@ -2085,23 +2114,12 @@ function generateManagementReport(type){
     title='Left / Withdrawn Students Report';
     headers=['UIN','Student Name',"Father's Name",'Branch','Category','Class','Batch','Status'];
     rows=students.filter(s=>['left','withdrawn','inactive','cancelled'].includes(String(s.Overall_Status||'').toLowerCase())).map(s=>[s.UIN||'',s.Student_Name||'',s.Father_Name||'',s.Branch_Name||'',s.Category_Name||'',s.Class_Name||'',s.Batch_Code||'',s.Overall_Status||'']);
-  }else if(type==='faculty'){
-    title=`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`;
-    headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
-    const fa=state.data.facultyAttendance||[];
-    rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
-      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
-      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
-      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
-      return true;
-    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
     const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
   }
-  // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
   managementReportCache={type,title,headers,rows,filters:{campusName,className,batchCode,reportDate,batchCount:batchMatches.length}};
   renderManagementReport('managementReportOutput',managementReportCache);
 }
