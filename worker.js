@@ -1,5 +1,5 @@
 /**
- * AJMAL SUPER 40 ERP - Cloudflare Worker entrypoint. updated
+ * AJMAL SUPER 40 ERP - Cloudflare Worker entrypoint.
  *
  * This keeps the existing frontend unchanged while providing the /api proxy
  * required by scripts.js. All ERP business logic remains in Google Apps
