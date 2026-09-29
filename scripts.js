@@ -1991,26 +1991,17 @@ function updateManagementClassSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
   const cls=document.getElementById('managementClassFilter');
   const batch=document.getElementById('managementBatchFilter');
-  if(cls){
-    cls.disabled=!campus;
-    cls.innerHTML=campus?reportClassOptions('',campus):'<option value="">Select campus first</option>';
-  }
-  if(batch){
-    batch.disabled=!campus;
-    batch.innerHTML=campus?reportBatchOptions('',campus,''):'<option value="">Select campus first</option>';
-  }
+  if(cls){ cls.disabled=!campus; cls.innerHTML=campus?reportClassOptions('',campus):'<option value="">Select campus first</option>'; }
+  if(batch){ batch.disabled=true; batch.innerHTML='<option value="">Select class first</option>'; }
 }
 function updateManagementBatchSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
   const cls=document.getElementById('managementClassFilter')?.value||'';
   const batch=document.getElementById('managementBatchFilter');
-  if(batch){
-    batch.disabled=!campus;
-    batch.innerHTML=campus?reportBatchOptions('',campus,cls):'<option value="">Select campus first</option>';
-  }
+  if(batch){ batch.disabled=!campus||!cls; batch.innerHTML=(campus&&cls)?reportBatchOptions('',campus,cls):'<option value="">Select class first</option>'; }
 }
 function managementReportFiltersHTML(){
-  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Report Filters</h3><div class="muted">Select a campus first. Class and Batch are optional; choose All Classes and generate the report without selecting a batch when a campus-wide report is required.</div></div><span class="badge badge-blue">Branch Scoped</span></div><div class="grid grid-4"><div><label class="small muted">Campus</label><select id="managementCampusFilter" class="select" onchange="updateManagementClassSelect()">${reportCampusOptions()}</select></div><div><label class="small muted">Class</label><select id="managementClassFilter" class="select" disabled onchange="updateManagementBatchSelect()"><option value="">Select campus first</option></select></div><div><label class="small muted">Batch <span class="muted">(Optional)</span></label><select id="managementBatchFilter" class="select" disabled><option value="">Select campus first</option></select></div><div><label class="small muted">Operational Date</label><input id="managementDateFilter" type="date" class="input" value="${escapeAttr(state.date)}"></div></div></div>`;
+  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Report Filters</h3><div class="muted">Select campus first, then its associated class, then the batches associated with that class.</div></div><span class="badge badge-blue">Branch Scoped</span></div><div class="grid grid-4"><div><label class="small muted">Campus</label><select id="managementCampusFilter" class="select" onchange="updateManagementClassSelect()">${reportCampusOptions()}</select></div><div><label class="small muted">Class</label><select id="managementClassFilter" class="select" disabled onchange="updateManagementBatchSelect()"><option value="">Select campus first</option></select></div><div><label class="small muted">Batch</label><select id="managementBatchFilter" class="select" disabled><option value="">Select class first</option></select></div><div><label class="small muted">Operational Date</label><input id="managementDateFilter" type="date" class="input" value="${escapeAttr(state.date)}"></div></div></div>`;
 }
 function reportsHTML(){
   const cats=categoryTotals();
@@ -2021,7 +2012,7 @@ function reportsHTML(){
     ['residence','Hosteller ↔ Day Scholar Report','Current and recorded residential-status conversions.','gold'],
     ['leftout','Left / Withdrawn Students','Students whose current master status is Left, Withdrawn, Inactive or Cancelled.','red'],
     ['exceptions','Attendance Exception Report','Absent, Leave, Sick and Not Marked students requiring attention.','green'],
-    ['faculty','Faculty / Teacher Attendance Report','Daily faculty arrival-status records for the selected campus/class; batch is optional.','purple']
+    ['faculty','Faculty / Teacher Attendance Report','Subject-wise daily faculty attendance records.','purple']
   ];
   return `<div class="section-title"><div><h2>Management Reports</h2><span class="muted">Generate live reports from the authorised branch data and current ERP records.</span></div></div>
   <div class="grid grid-4">${branches.map(br=>{const id=String(br.Branch_ID);const st=(state.data.students||[]).filter(s=>String(s.Branch_ID||'BR001')===id && !['left','inactive','withdrawn','cancelled'].includes(String(s.Overall_Status||'Active').toLowerCase()));const ba=reportScopedBatches().filter(b=>String(b.Branch_ID||'BR001')===id);const n=st.length||ba.reduce((x,b)=>x+Number(b.Expected_Strength||0),0);return `<div class="card branch-report-card"><div class="metric-label">${escapeHtml(br.Branch_Name)}</div><div class="metric">${n.toLocaleString()}</div><div class="small muted">${ba.length} batches</div></div>`}).join('')}</div>
@@ -2050,13 +2041,6 @@ function managementCampusName(row){
   const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(row.Batch_ID));
   return b?.Campus_Name||row.Campus||'';
 }
-function deriveClassFromCategoryClient_(value){
-  const u=String(value||'').trim().toUpperCase();
-  if(/\bCHALLENGERS?\b/.test(u)) return 'Challengers';
-  if(/\bXII\b|\bCLASS\s*12\b/.test(u)) return 'XII';
-  if(/\bXI\b|\bCLASS\s*11\b/.test(u)) return 'XI';
-  return '';
-}
 function managementBatchName(row){
   if(row.Batch_Code) return row.Batch_Code;
   const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(row.Batch_ID));
@@ -2068,28 +2052,7 @@ function generateManagementReport(type){
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
   const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
-
-  // Faculty attendance reports are generated from the authoritative
-  // Faculty_Attendance sheet on the backend. This avoids depending on the
-  // client bootstrap scope, which can legitimately omit rows for branch-scoped
-  // Admin sessions, and correctly handles CLASS-scope rows with no Batch_ID.
-  if(type==='faculty'){
-    const finish=report=>{
-      managementReportCache=report||{};
-      renderManagementReport('managementReportOutput',managementReportCache);
-    };
-    const fail=err=>showToast(err?.message||'Could not generate Faculty / Teacher Attendance Report');
-    const filters={campusName,className,batchCode,reportDate,branchId:facultyBranch()};
-    if(isGAS()){
-      showToast('Generating Faculty / Teacher Attendance Report…');
-      google.script.run.withSuccessHandler(finish).withFailureHandler(fail).getFacultyAttendanceReport(state.session.token,filters);
-    }else{
-      finish({ok:false,title:`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`,headers:['Date','Branch','Category','Class','Campus','Batch','Faculty','Subject','Initials / Abbreviation','Attendance Status','Remarks'],rows:[]});
-      showToast('Faculty / Teacher report is available only through the connected ERP deployment.');
-    }
-    return;
-  }
-
+  if(batchCode && !className){showToast('Select a class before choosing a batch.');return;}
   const students=currentScopedStudents({campusName,className,batchCode});
   const att=state.data.attendance||[];
   const mov=state.data.movements||[];
@@ -2114,12 +2077,23 @@ function generateManagementReport(type){
     title='Left / Withdrawn Students Report';
     headers=['UIN','Student Name',"Father's Name",'Branch','Category','Class','Batch','Status'];
     rows=students.filter(s=>['left','withdrawn','inactive','cancelled'].includes(String(s.Overall_Status||'').toLowerCase())).map(s=>[s.UIN||'',s.Student_Name||'',s.Father_Name||'',s.Branch_Name||'',s.Category_Name||'',s.Class_Name||'',s.Batch_Code||'',s.Overall_Status||'']);
+  }else if(type==='faculty'){
+    title=`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`;
+    headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
+    const fa=state.data.facultyAttendance||[];
+    rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
+      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
+      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
+      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
+      return true;
+    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
     const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
   }
+  // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
   managementReportCache={type,title,headers,rows,filters:{campusName,className,batchCode,reportDate,batchCount:batchMatches.length}};
   renderManagementReport('managementReportOutput',managementReportCache);
 }
@@ -2829,11 +2803,11 @@ function managementAttendanceSnapshotHTML(){
       .ms-chart-grid{grid-template-columns:1fr 1fr!important;gap:8px!important}
       .ms-panel,.ms-summary{break-inside:avoid-page;page-break-inside:auto;overflow:visible!important}
       .ms-chart-panel{break-inside:avoid-page;page-break-inside:avoid}
-      .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8px!important}
+      .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8.75px!important}
       .ms-table thead,.data-table thead{display:table-header-group!important}
       .ms-table tbody,.data-table tbody{display:table-row-group!important}
       .ms-table tr,.data-table tr{break-inside:avoid-page;page-break-inside:avoid}
-      .ms-table th,.ms-table td{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important;word-break:normal!important;padding:4px 3px!important;line-height:1.15!important}
+      .ms-table th,.ms-table td{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important;word-break:normal!important;padding:4px 3px!important;line-height:1.2!important}
       .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow:visible!important;box-sizing:border-box!important}
       .ms-table th:first-child,.ms-table td:first-child{width:4%!important;text-align:center!important}
       .ms-table th:nth-child(2),.ms-table td:nth-child(2){width:18%!important;text-align:center!important;min-width:0!important}
@@ -2863,10 +2837,10 @@ function managementAttendanceSnapshotHTML(){
       .ms-panel-purple .ms-table th:nth-child(2),.ms-panel-purple .ms-table td:nth-child(2){width:18%!important;min-width:0!important}
       .ms-panel-orange .ms-table th:nth-child(2),.ms-panel-orange .ms-table td:nth-child(2){width:20%!important;min-width:0!important}
       .ms-badge{font-size:9px!important;padding:5px 7px!important}
-      .ms-head h1{font-size:21px!important}.ms-head p{font-size:9px!important}.ms-summary-head{font-size:11px!important;padding:8px 10px!important}
-      .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8px!important}.ms-metric-value{font-size:14px!important}.ms-metric-sub{font-size:7px!important}
-      .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:11px!important}.ms-panel-head p{font-size:8px!important}
-      .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8px!important}.ms-chart-track{height:6px!important}
+      .ms-head h1{font-size:22px!important}.ms-head p{font-size:9.5px!important}.ms-summary-head{font-size:11.5px!important;padding:8px 10px!important}
+      .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8.5px!important}.ms-metric-value{font-size:15px!important}.ms-metric-sub{font-size:7.5px!important}
+      .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:12px!important}.ms-panel-head p{font-size:8.75px!important}
+      .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8.5px!important}.ms-chart-track{height:6px!important}
     }
   </style><div class="ms-head"><div><h1>Attendance Management Snapshot</h1><p>Daily operational overview of students and faculty across the authorized campus scope.</p></div><div class="ms-badges"><span class="ms-badge">Date: ${escapeHtml(formatDate(snap.date||state.managementSnapshotDate))}</span><span class="ms-badge">Scope: ${escapeHtml(headerScope)}</span><span class="ms-badge">Generated: ${escapeHtml(new Date(snap.generatedAt||Date.now()).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))}</span></div></div>${managementSnapshotFiltersHtml_(snap)}<div class="ms-kpi-grid"><div class="ms-summary ms-summary-student"><div class="ms-summary-head">👥 Overall Student Attendance <span class="muted">(Visible Campuses)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Total Strength',Number(s.Eligible||0).toLocaleString(),'Eligible','blue')}${managementSnapshotMetric_('Present',Number(s.Present||0).toLocaleString(),'Students','green')}${managementSnapshotMetric_('Absent',Number(s.Absent||0).toLocaleString(),'Students','red')}${managementSnapshotMetric_('Sick',Number(s.Sick||0).toLocaleString(),'Students','purple')}${managementSnapshotMetric_('Leave',Number(s.Leave||0).toLocaleString(),'Students','orange')}${managementSnapshotMetric_('Not Marked',Number(s.Not_Marked||0).toLocaleString(),'Pending','gray')}${managementSnapshotMetric_('Attendance %',((snap.student?.attendancePct||0).toFixed(2)+'%'),'Present / Strength','blue')}</div></div><div class="ms-summary ms-summary-faculty"><div class="ms-summary-head">👨‍🏫 Overall Faculty Attendance <span class="muted">(Actual Arrival Status)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Faculty Strength',Number(f.facultyStrength||0).toLocaleString(),'Unique Faculty','green')}${managementSnapshotMetric_('Early',Number(f.early||0).toLocaleString(),'Arrival','green')}${managementSnapshotMetric_('On Time',Number(f.onTime||0).toLocaleString(),'Arrival','blue')}${managementSnapshotMetric_('Late 5–10',Number(f.late510||0).toLocaleString(),'Minutes','orange')}${managementSnapshotMetric_('Late >15',Number(f.late15||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Late >30',Number(f.late30||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Marked %',facultyMarkedPct.toFixed(2)+'%','Unique faculty marked','blue')}</div></div></div>${managementSnapshotChartsHtml_(snap)}${managementStudentTableHtml_(snap.student?.rows||[])}${managementFacultyTableHtml_(snap.faculty?.rows||[])}${managementDeploymentHtml_(snap.deployment||[])}${managementTraineeHtml_(snap.trainee||[])}</div>`;
 }
@@ -2890,7 +2864,7 @@ function buildAttendanceManagementSnapshotPrintHtml_(){
     .ms-filter-grid,.ms-filter-actions{display:none!important}
     .ms-kpi-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
     .ms-chart-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
-    .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8px!important}
+    .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8.75px!important}
     .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow:visible!important;box-sizing:border-box!important}
     .ms-panel{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;overflow:visible!important}
     .ms-table thead,.data-table thead{display:table-header-group!important}
@@ -2931,10 +2905,10 @@ function buildAttendanceManagementSnapshotPrintHtml_(){
     .ms-panel-orange .ms-table th:nth-child(9),.ms-panel-orange .ms-table td:nth-child(9){width:7%!important}
     .ms-panel-orange .ms-table th:nth-child(10),.ms-panel-orange .ms-table td:nth-child(10){width:7%!important}
     .ms-panel-orange .ms-table th:nth-child(11),.ms-panel-orange .ms-table td:nth-child(11){width:8%!important}
-    .ms-head h1{font-size:21px!important}.ms-head p{font-size:9px!important}.ms-summary-head{font-size:11px!important;padding:8px 10px!important}
-    .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8px!important}.ms-metric-value{font-size:14px!important}.ms-metric-sub{font-size:7px!important}
-    .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:11px!important}.ms-panel-head p{font-size:8px!important}
-    .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8px!important}.ms-chart-track{height:6px!important}
+    .ms-head h1{font-size:22px!important}.ms-head p{font-size:9.5px!important}.ms-summary-head{font-size:11.5px!important;padding:8px 10px!important}
+    .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8.5px!important}.ms-metric-value{font-size:15px!important}.ms-metric-sub{font-size:7.5px!important}
+    .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:12px!important}.ms-panel-head p{font-size:8.75px!important}
+    .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8.5px!important}.ms-chart-track{height:6px!important}
     .ms-summary{break-inside:avoid;page-break-inside:avoid}
     .ms-chart-panel{break-inside:avoid;page-break-inside:avoid}
     .ms-panel-blue,.ms-panel-green,.ms-panel-purple,.ms-panel-orange{break-inside:auto;page-break-inside:auto}
