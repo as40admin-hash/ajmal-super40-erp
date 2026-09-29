@@ -1991,17 +1991,26 @@ function updateManagementClassSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
   const cls=document.getElementById('managementClassFilter');
   const batch=document.getElementById('managementBatchFilter');
-  if(cls){ cls.disabled=!campus; cls.innerHTML=campus?reportClassOptions('',campus):'<option value="">Select campus first</option>'; }
-  if(batch){ batch.disabled=true; batch.innerHTML='<option value="">Select class first</option>'; }
+  if(cls){
+    cls.disabled=!campus;
+    cls.innerHTML=campus?reportClassOptions('',campus):'<option value="">Select campus first</option>';
+  }
+  if(batch){
+    batch.disabled=!campus;
+    batch.innerHTML=campus?reportBatchOptions('',campus,''):'<option value="">Select campus first</option>';
+  }
 }
 function updateManagementBatchSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
   const cls=document.getElementById('managementClassFilter')?.value||'';
   const batch=document.getElementById('managementBatchFilter');
-  if(batch){ batch.disabled=!campus||!cls; batch.innerHTML=(campus&&cls)?reportBatchOptions('',campus,cls):'<option value="">Select class first</option>'; }
+  if(batch){
+    batch.disabled=!campus;
+    batch.innerHTML=campus?reportBatchOptions('',campus,cls):'<option value="">Select campus first</option>';
+  }
 }
 function managementReportFiltersHTML(){
-  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Report Filters</h3><div class="muted">Select campus first, then its associated class, then the batches associated with that class.</div></div><span class="badge badge-blue">Branch Scoped</span></div><div class="grid grid-4"><div><label class="small muted">Campus</label><select id="managementCampusFilter" class="select" onchange="updateManagementClassSelect()">${reportCampusOptions()}</select></div><div><label class="small muted">Class</label><select id="managementClassFilter" class="select" disabled onchange="updateManagementBatchSelect()"><option value="">Select campus first</option></select></div><div><label class="small muted">Batch</label><select id="managementBatchFilter" class="select" disabled><option value="">Select class first</option></select></div><div><label class="small muted">Operational Date</label><input id="managementDateFilter" type="date" class="input" value="${escapeAttr(state.date)}"></div></div></div>`;
+  return `<div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h3 style="margin:0">Report Filters</h3><div class="muted">Select a campus first. Class and Batch are optional; choose All Classes and generate the report without selecting a batch when a campus-wide report is required.</div></div><span class="badge badge-blue">Branch Scoped</span></div><div class="grid grid-4"><div><label class="small muted">Campus</label><select id="managementCampusFilter" class="select" onchange="updateManagementClassSelect()">${reportCampusOptions()}</select></div><div><label class="small muted">Class</label><select id="managementClassFilter" class="select" disabled onchange="updateManagementBatchSelect()"><option value="">Select campus first</option></select></div><div><label class="small muted">Batch <span class="muted">(Optional)</span></label><select id="managementBatchFilter" class="select" disabled><option value="">Select campus first</option></select></div><div><label class="small muted">Operational Date</label><input id="managementDateFilter" type="date" class="input" value="${escapeAttr(state.date)}"></div></div></div>`;
 }
 function reportsHTML(){
   const cats=categoryTotals();
@@ -2052,7 +2061,6 @@ function generateManagementReport(type){
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
   const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
-  if(batchCode && !className){showToast('Select a class before choosing a batch.');return;}
   const students=currentScopedStudents({campusName,className,batchCode});
   const att=state.data.attendance||[];
   const mov=state.data.movements||[];
