@@ -2790,7 +2790,58 @@ function managementAttendanceSnapshotHTML(){
     .ms-panel tfoot tr{background:#edf5ff;font-weight:800}.ms-panel-green tfoot tr{background:#edf9f2}.ms-panel-purple tfoot tr{background:#f4efff}.ms-panel-orange tfoot tr{background:#fff4e9}
     @media(max-width:1180px){.ms-filter-grid{grid-template-columns:repeat(3,1fr)}.ms-filter-actions{grid-column:1/-1;justify-content:flex-start}.ms-metrics{grid-template-columns:repeat(4,1fr)}.ms-chart-grid,.ms-kpi-grid{grid-template-columns:1fr}}
     @media(max-width:720px){.management-snapshot-root .ms-head{flex-direction:column}.ms-badges{justify-content:flex-start}.ms-filter-grid{grid-template-columns:1fr}.ms-filter-actions{grid-column:auto}.ms-metrics{grid-template-columns:repeat(2,1fr)}.ms-table{min-width:1080px}}
-    @media print{body *{visibility:hidden!important}.management-snapshot-root,.management-snapshot-root *{visibility:visible!important}.management-snapshot-root{position:absolute;left:0;top:0;width:100%;box-shadow:none}.ms-filter-grid,.ms-filter-actions{display:none!important}.ms-panel{break-inside:avoid}.ms-chart-grid{grid-template-columns:1fr 1fr}.ms-table{font-size:9px}.ms-kpi-grid{grid-template-columns:1fr 1fr}.ms-metrics{grid-template-columns:repeat(7,1fr)}}
+    @media print{
+      @page{size:A4 landscape;margin:8mm 7mm 10mm}
+      html,body{margin:0!important;padding:0!important;width:100%!important;min-width:0!important;background:#fff!important}
+      body *{visibility:hidden!important}
+      .management-snapshot-root,.management-snapshot-root *{visibility:visible!important}
+      .management-snapshot-root{position:static!important;left:auto!important;top:auto!important;width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;box-shadow:none!important;margin:0!important;padding:0!important;overflow:visible!important}
+      .ms-head{width:100%!important;box-sizing:border-box!important}
+      .ms-filter-grid,.ms-filter-actions{display:none!important}
+      .ms-kpi-grid{grid-template-columns:1fr 1fr!important;gap:8px!important}
+      .ms-metrics{grid-template-columns:repeat(7,minmax(0,1fr))!important}
+      .ms-chart-grid{grid-template-columns:1fr 1fr!important;gap:8px!important}
+      .ms-panel,.ms-summary{break-inside:avoid-page;page-break-inside:auto;overflow:visible!important}
+      .ms-chart-panel{break-inside:avoid-page;page-break-inside:avoid}
+      .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8px!important}
+      .ms-table thead,.data-table thead{display:table-header-group!important}
+      .ms-table tbody,.data-table tbody{display:table-row-group!important}
+      .ms-table tr,.data-table tr{break-inside:avoid-page;page-break-inside:avoid}
+      .ms-table th,.ms-table td{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important;word-break:normal!important;padding:4px 3px!important;line-height:1.15!important}
+      .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow:visible!important;box-sizing:border-box!important}
+      .ms-table th:first-child,.ms-table td:first-child{width:4%!important;text-align:center!important}
+      .ms-table th:nth-child(2),.ms-table td:nth-child(2){width:18%!important;text-align:center!important;min-width:0!important}
+      .ms-table th:nth-child(3),.ms-table td:nth-child(3){text-align:center!important}
+      .ms-table th:nth-child(4),.ms-table td:nth-child(4){text-align:center!important}
+      .ms-table th,.ms-table td{text-align:center!important}
+      .ms-panel-head{break-after:avoid-page}
+      .ms-panel-blue .ms-table th:nth-child(5),.ms-panel-blue .ms-table td:nth-child(5),
+      .ms-panel-blue .ms-table th:nth-child(6),.ms-panel-blue .ms-table td:nth-child(6),
+      .ms-panel-blue .ms-table th:nth-child(7),.ms-panel-blue .ms-table td:nth-child(7),
+      .ms-panel-blue .ms-table th:nth-child(8),.ms-panel-blue .ms-table td:nth-child(8){width:7%!important}
+      .ms-panel-blue .ms-table th:nth-child(9),.ms-panel-blue .ms-table td:nth-child(9),
+      .ms-panel-blue .ms-table th:nth-child(10),.ms-panel-blue .ms-table td:nth-child(10),
+      .ms-panel-blue .ms-table th:nth-child(11),.ms-panel-blue .ms-table td:nth-child(11){width:9%!important}
+      .ms-faculty-table th:first-child,.ms-faculty-table td:first-child{width:4%!important}
+      .ms-faculty-table th:nth-child(2),.ms-faculty-table td:nth-child(2){width:18%!important;min-width:0!important}
+      .ms-faculty-table th:nth-child(3),.ms-faculty-table td:nth-child(3),
+      .ms-faculty-table th:nth-child(4),.ms-faculty-table td:nth-child(4),
+      .ms-faculty-table th:nth-child(5),.ms-faculty-table td:nth-child(5),
+      .ms-faculty-table th:nth-child(6),.ms-faculty-table td:nth-child(6),
+      .ms-faculty-table th:nth-child(7),.ms-faculty-table td:nth-child(7),
+      .ms-faculty-table th:nth-child(8),.ms-faculty-table td:nth-child(8),
+      .ms-faculty-table th:nth-child(9),.ms-faculty-table td:nth-child(9),
+      .ms-faculty-table th:nth-child(10),.ms-faculty-table td:nth-child(10),
+      .ms-faculty-table th:nth-child(11),.ms-faculty-table td:nth-child(11),
+      .ms-faculty-table th:nth-child(12),.ms-faculty-table td:nth-child(12){width:auto!important}
+      .ms-panel-purple .ms-table th:nth-child(2),.ms-panel-purple .ms-table td:nth-child(2){width:18%!important;min-width:0!important}
+      .ms-panel-orange .ms-table th:nth-child(2),.ms-panel-orange .ms-table td:nth-child(2){width:20%!important;min-width:0!important}
+      .ms-badge{font-size:9px!important;padding:5px 7px!important}
+      .ms-head h1{font-size:21px!important}.ms-head p{font-size:9px!important}.ms-summary-head{font-size:11px!important;padding:8px 10px!important}
+      .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8px!important}.ms-metric-value{font-size:14px!important}.ms-metric-sub{font-size:7px!important}
+      .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:11px!important}.ms-panel-head p{font-size:8px!important}
+      .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8px!important}.ms-chart-track{height:6px!important}
+    }
   </style><div class="ms-head"><div><h1>Attendance Management Snapshot</h1><p>Daily operational overview of students and faculty across the authorized campus scope.</p></div><div class="ms-badges"><span class="ms-badge">Date: ${escapeHtml(formatDate(snap.date||state.managementSnapshotDate))}</span><span class="ms-badge">Scope: ${escapeHtml(headerScope)}</span><span class="ms-badge">Generated: ${escapeHtml(new Date(snap.generatedAt||Date.now()).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))}</span></div></div>${managementSnapshotFiltersHtml_(snap)}<div class="ms-kpi-grid"><div class="ms-summary ms-summary-student"><div class="ms-summary-head">👥 Overall Student Attendance <span class="muted">(Visible Campuses)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Total Strength',Number(s.Eligible||0).toLocaleString(),'Eligible','blue')}${managementSnapshotMetric_('Present',Number(s.Present||0).toLocaleString(),'Students','green')}${managementSnapshotMetric_('Absent',Number(s.Absent||0).toLocaleString(),'Students','red')}${managementSnapshotMetric_('Sick',Number(s.Sick||0).toLocaleString(),'Students','purple')}${managementSnapshotMetric_('Leave',Number(s.Leave||0).toLocaleString(),'Students','orange')}${managementSnapshotMetric_('Not Marked',Number(s.Not_Marked||0).toLocaleString(),'Pending','gray')}${managementSnapshotMetric_('Attendance %',((snap.student?.attendancePct||0).toFixed(2)+'%'),'Present / Strength','blue')}</div></div><div class="ms-summary ms-summary-faculty"><div class="ms-summary-head">👨‍🏫 Overall Faculty Attendance <span class="muted">(Actual Arrival Status)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Faculty Strength',Number(f.facultyStrength||0).toLocaleString(),'Unique Faculty','green')}${managementSnapshotMetric_('Early',Number(f.early||0).toLocaleString(),'Arrival','green')}${managementSnapshotMetric_('On Time',Number(f.onTime||0).toLocaleString(),'Arrival','blue')}${managementSnapshotMetric_('Late 5–10',Number(f.late510||0).toLocaleString(),'Minutes','orange')}${managementSnapshotMetric_('Late >15',Number(f.late15||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Late >30',Number(f.late30||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Marked %',facultyMarkedPct.toFixed(2)+'%','Unique faculty marked','blue')}</div></div></div>${managementSnapshotChartsHtml_(snap)}${managementStudentTableHtml_(snap.student?.rows||[])}${managementFacultyTableHtml_(snap.faculty?.rows||[])}${managementDeploymentHtml_(snap.deployment||[])}${managementTraineeHtml_(snap.trainee||[])}</div>`;
 }
 function loadAttendanceManagementSnapshot(force=false){
@@ -2800,7 +2851,79 @@ function loadAttendanceManagementSnapshot(force=false){
   const filters={date:state.managementSnapshotDate,branchId:state.managementSnapshotBranch,campusName:state.managementSnapshotCampus,categoryName:state.managementSnapshotCategory,className:state.managementSnapshotClass};
   google.script.run.withSuccessHandler(res=>{state._managementSnapshotLoading=false;state.managementSnapshot=res||null;const c=document.getElementById('content');if(c&&state.page==='attendanceSnapshot')c.innerHTML=managementAttendanceSnapshotHTML();}).withFailureHandler(err=>{state._managementSnapshotLoading=false;showToast(err?.message||'Could not load Management Snapshot');}).getAttendanceManagementSnapshot(state.session.token,filters);
 }
-function printAttendanceManagementSnapshot(){window.print();}
+function buildAttendanceManagementSnapshotPrintHtml_(){
+  const root=document.getElementById('managementSnapshotRoot');
+  if(!root) return '';
+  const clone=root.cloneNode(true);
+  clone.querySelectorAll('.ms-filter-grid,.ms-filter-actions').forEach(el=>el.remove());
+  const extraStyle=`<style>
+    @page{size:A4 landscape;margin:8mm 7mm 10mm}
+    html,body{margin:0!important;padding:0!important;width:100%!important;min-width:0!important;background:#fff!important}
+    body{font-family:Arial,Helvetica,sans-serif;color:#17324d;font-size:9px;line-height:1.2}
+    #managementSnapshotRoot{display:block!important;position:static!important;width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;margin:0!important;padding:0!important;overflow:visible!important}
+    .ms-filter-grid,.ms-filter-actions{display:none!important}
+    .ms-kpi-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+    .ms-chart-grid{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+    .ms-table,.data-table{width:100%!important;max-width:100%!important;min-width:0!important;table-layout:fixed!important;border-collapse:collapse!important;font-size:8px!important}
+    .table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;overflow:visible!important;box-sizing:border-box!important}
+    .ms-panel{width:100%!important;max-width:100%!important;min-width:0!important;box-sizing:border-box!important;overflow:visible!important}
+    .ms-table thead,.data-table thead{display:table-header-group!important}
+    .ms-table tr,.data-table tr{break-inside:avoid;page-break-inside:avoid}
+    .ms-table th,.ms-table td{white-space:normal!important;overflow:visible!important;overflow-wrap:anywhere!important;word-break:normal!important;text-align:center!important;vertical-align:middle!important;padding:4px 3px!important;line-height:1.15!important}
+    .ms-table th:first-child,.ms-table td:first-child{width:4%!important}
+    .ms-table th:nth-child(2),.ms-table td:nth-child(2){text-align:center!important;min-width:0!important;width:18%!important}
+    .ms-panel-blue .ms-table th:nth-child(3),.ms-panel-blue .ms-table td:nth-child(3){width:14%!important}
+    .ms-panel-blue .ms-table th:nth-child(4),.ms-panel-blue .ms-table td:nth-child(4){width:8%!important}
+    .ms-panel-blue .ms-table th:nth-child(5),.ms-panel-blue .ms-table td:nth-child(5),.ms-panel-blue .ms-table th:nth-child(6),.ms-panel-blue .ms-table td:nth-child(6),.ms-panel-blue .ms-table th:nth-child(7),.ms-panel-blue .ms-table td:nth-child(7),.ms-panel-blue .ms-table th:nth-child(8),.ms-panel-blue .ms-table td:nth-child(8){width:7%!important}
+    .ms-panel-blue .ms-table th:nth-child(9),.ms-panel-blue .ms-table td:nth-child(9),.ms-panel-blue .ms-table th:nth-child(10),.ms-panel-blue .ms-table td:nth-child(10){width:9%!important}
+    .ms-panel-blue .ms-table th:nth-child(11),.ms-panel-blue .ms-table td:nth-child(11){width:10%!important}
+    .ms-faculty-table th:first-child,.ms-faculty-table td:first-child{width:4%!important}
+    .ms-faculty-table th:nth-child(2),.ms-faculty-table td:nth-child(2){width:18%!important;min-width:0!important;text-align:center!important}
+    .ms-faculty-table th:nth-child(3),.ms-faculty-table td:nth-child(3){width:8%!important}
+    .ms-faculty-table th:nth-child(4),.ms-faculty-table td:nth-child(4){width:8%!important}
+    .ms-faculty-table th:nth-child(5),.ms-faculty-table td:nth-child(5){width:8%!important}
+    .ms-faculty-table th:nth-child(6),.ms-faculty-table td:nth-child(6){width:9%!important}
+    .ms-faculty-table th:nth-child(7),.ms-faculty-table td:nth-child(7){width:9%!important}
+    .ms-faculty-table th:nth-child(8),.ms-faculty-table td:nth-child(8){width:8%!important}
+    .ms-faculty-table th:nth-child(9),.ms-faculty-table td:nth-child(9){width:8%!important}
+    .ms-faculty-table th:nth-child(10),.ms-faculty-table td:nth-child(10){width:7%!important}
+    .ms-faculty-table th:nth-child(11),.ms-faculty-table td:nth-child(11){width:6%!important}
+    .ms-faculty-table th:nth-child(12),.ms-faculty-table td:nth-child(12){width:7%!important}
+    .ms-panel-purple .ms-table th:nth-child(2),.ms-panel-purple .ms-table td:nth-child(2){width:18%!important;min-width:0!important}
+    .ms-panel-purple .ms-table th:nth-child(3),.ms-panel-purple .ms-table td:nth-child(3){width:14%!important}
+    .ms-panel-purple .ms-table th:nth-child(4),.ms-panel-purple .ms-table td:nth-child(4){width:8%!important}
+    .ms-panel-purple .ms-table th:nth-child(5),.ms-panel-purple .ms-table td:nth-child(5){width:8%!important}
+    .ms-panel-purple .ms-table th:nth-child(6),.ms-panel-purple .ms-table td:nth-child(6){width:30%!important}
+    .ms-panel-purple .ms-table th:nth-child(7),.ms-panel-purple .ms-table td:nth-child(7){width:18%!important}
+    .ms-panel-orange .ms-table th:nth-child(2),.ms-panel-orange .ms-table td:nth-child(2){width:20%!important;min-width:0!important}
+    .ms-panel-orange .ms-table th:nth-child(3),.ms-panel-orange .ms-table td:nth-child(3){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(4),.ms-panel-orange .ms-table td:nth-child(4){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(5),.ms-panel-orange .ms-table td:nth-child(5){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(6),.ms-panel-orange .ms-table td:nth-child(6){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(7),.ms-panel-orange .ms-table td:nth-child(7){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(8),.ms-panel-orange .ms-table td:nth-child(8){width:9%!important}
+    .ms-panel-orange .ms-table th:nth-child(9),.ms-panel-orange .ms-table td:nth-child(9){width:7%!important}
+    .ms-panel-orange .ms-table th:nth-child(10),.ms-panel-orange .ms-table td:nth-child(10){width:7%!important}
+    .ms-panel-orange .ms-table th:nth-child(11),.ms-panel-orange .ms-table td:nth-child(11){width:8%!important}
+    .ms-head h1{font-size:21px!important}.ms-head p{font-size:9px!important}.ms-summary-head{font-size:11px!important;padding:8px 10px!important}
+    .ms-metric{padding:8px 4px!important}.ms-metric-label{font-size:8px!important}.ms-metric-value{font-size:14px!important}.ms-metric-sub{font-size:7px!important}
+    .ms-panel-head{padding:7px 10px!important}.ms-panel-head h3{font-size:11px!important}.ms-panel-head p{font-size:8px!important}
+    .ms-chart-row{padding:6px 10px 0!important}.ms-chart-label{font-size:8px!important}.ms-chart-track{height:6px!important}
+    .ms-summary{break-inside:avoid;page-break-inside:avoid}
+    .ms-chart-panel{break-inside:avoid;page-break-inside:avoid}
+    .ms-panel-blue,.ms-panel-green,.ms-panel-purple,.ms-panel-orange{break-inside:auto;page-break-inside:auto}
+    .ms-panel-blue .ms-panel-head,.ms-panel-green .ms-panel-head,.ms-panel-purple .ms-panel-head,.ms-panel-orange .ms-panel-head{break-after:avoid;page-break-after:avoid}
+  </style>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Attendance Management Snapshot</title></head><body>${clone.outerHTML}${extraStyle}</body></html>`;
+}
+function printAttendanceManagementSnapshot(){
+  const html=buildAttendanceManagementSnapshotPrintHtml_();
+  if(!html){showToast('Generate the Management Snapshot first.');return;}
+  const w=window.open('','_blank');
+  if(!w){showToast('Please allow pop-ups to print the Management Snapshot.');return;}
+  w.document.open();w.document.write(html);w.document.close();w.focus();
+  setTimeout(()=>{w.print();},450);
+}
 function saveAttendanceManagementSnapshotAsPdf(){printAttendanceManagementSnapshot();}
 function downloadAttendanceManagementSnapshotCsv(){
   const snap=state.managementSnapshot;if(!snap){showToast('Generate the snapshot first.');return;}
