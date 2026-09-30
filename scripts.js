@@ -1050,7 +1050,38 @@ function facultyResetDownstream(level){
   if(level<3) state.facultyCampusFilter='';
   if(level<4) state.facultyBatchFilter='';
 }
-function normalizeDateKey_(v){const d=v instanceof Date?v:new Date(v);if(!isNaN(d.getTime()))return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return String(v||'').slice(0,10);}
+function normalizeDateKey_(v){
+  if(v===null||v===undefined||v==='') return '';
+  if(v instanceof Date){
+    if(isNaN(v.getTime())) return '';
+    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  }
+  const s=String(v).trim();
+  if(!s) return '';
+
+  // Preserve date-only values exactly as supplied by <input type="date">
+  // or spreadsheet text. Do NOT slice ISO timestamps before parsing:
+  // Apps Script serializes Spreadsheet Date objects to ISO/UTC, and slicing
+  // the UTC portion can move an India-local date to the previous calendar day.
+  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:$|[T\s])/);
+  if(m && !/T|Z|[+-]\d{2}:?\d{2}$/.test(s)){
+    return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  }
+
+  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if(m){
+    const a=Number(m[1]),b=Number(m[2]),y=m[3];
+    const month=a>12?b:a;
+    const day=a>12?a:b;
+    if(month>=1&&month<=12&&day>=1&&day<=31) return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  }
+
+  // Parse ISO timestamps as real instants first, then use the user's local
+  // calendar date. This correctly reverses Apps Script's UTC serialization.
+  const d=new Date(s);
+  if(!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return s.slice(0,10);
+}
 function facultyAssignmentsForBatch_(batchId){
   const assignments=state.facultyOptions.assignments||[];
   return assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE' && String(a.Batch_ID||'')===String(batchId));
@@ -2050,7 +2081,7 @@ function generateManagementReport(type){
   const campusName=document.getElementById('managementCampusFilter')?.value||'';
   const className=document.getElementById('managementClassFilter')?.value||'';
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
-  const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
+  const reportDate=normalizeDateKey_(document.getElementById('managementDateFilter')?.value||state.date)||state.date; // report date is always compared as a local YYYY-MM-DD key
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
   if(batchCode && !className){showToast('Select a class before choosing a batch.');return;}
   const students=currentScopedStudents({campusName,className,batchCode});
@@ -2062,7 +2093,7 @@ function generateManagementReport(type){
   if(type==='attendance'){
     title=`Daily Attendance Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Attendance'];
-    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
+    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();const a=today[u];return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),a?.Attendance_Status||'Not Marked'];});
   }else if(type==='movement'){
     title='Student Movement Register';
@@ -2081,7 +2112,7 @@ function generateManagementReport(type){
     title=`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`;
     headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
     const fa=state.data.facultyAttendance||[];
-    rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
+    rows=fa.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).filter(a=>{
       if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
       if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
       if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
@@ -2090,7 +2121,7 @@ function generateManagementReport(type){
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
-    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
+    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
   }
   // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
