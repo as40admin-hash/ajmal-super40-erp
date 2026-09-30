@@ -2082,11 +2082,15 @@ function generateManagementReport(type){
     headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
     const fa=state.data.facultyAttendance||[];
     rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
-      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
-      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
-      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
+      const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));
+      const rowCampus=managementCampusName(a)||String(b?.Campus_Name||b?.Campus||'');
+      const rowClass=String(a.Class_Name||a.Class||'').trim()||batchClassName(b);
+      const rowBatch=String(a.Batch_Code||a.Batch||'').trim()||String(b?.Batch_Code||b?.Batch||'').trim();
+      if(campusName && rowCampus!==campusName)return false;
+      if(className && rowClass!==className)return false;
+      if(batchCode && rowBatch!==batchCode)return false;
       return true;
-    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
+    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName(a)||a.Batch_Code||a.Batch_Name||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
