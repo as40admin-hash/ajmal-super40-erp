@@ -1050,38 +1050,7 @@ function facultyResetDownstream(level){
   if(level<3) state.facultyCampusFilter='';
   if(level<4) state.facultyBatchFilter='';
 }
-function normalizeDateKey_(v){
-  if(v===null||v===undefined||v==='') return '';
-  if(v instanceof Date){
-    if(isNaN(v.getTime())) return '';
-    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
-  }
-  const s=String(v).trim();
-  if(!s) return '';
-
-  // Preserve date-only values exactly as supplied by <input type="date">
-  // or spreadsheet text. Do NOT slice ISO timestamps before parsing:
-  // Apps Script serializes Spreadsheet Date objects to ISO/UTC, and slicing
-  // the UTC portion can move an India-local date to the previous calendar day.
-  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:$|[T\s])/);
-  if(m && !/T|Z|[+-]\d{2}:?\d{2}$/.test(s)){
-    return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
-  }
-
-  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-  if(m){
-    const a=Number(m[1]),b=Number(m[2]),y=m[3];
-    const month=a>12?b:a;
-    const day=a>12?a:b;
-    if(month>=1&&month<=12&&day>=1&&day<=31) return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-  }
-
-  // Parse ISO timestamps as real instants first, then use the user's local
-  // calendar date. This correctly reverses Apps Script's UTC serialization.
-  const d=new Date(s);
-  if(!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  return s.slice(0,10);
-}
+function normalizeDateKey_(v){const d=v instanceof Date?v:new Date(v);if(!isNaN(d.getTime()))return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return String(v||'').slice(0,10);}
 function facultyAssignmentsForBatch_(batchId){
   const assignments=state.facultyOptions.assignments||[];
   return assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE' && String(a.Batch_ID||'')===String(batchId));
@@ -2001,64 +1970,22 @@ function batchesHTML(){
   return `<div class="card"><div class="section-title" style="margin-top:0"><div><h2>Batch / Campus Matrix</h2><span class="muted">${rows.length} matrix records • Student Batches + Faculty Groups</span></div><div class="toolbar">${admin?`<button class="btn btn-primary" onclick="openBatchMatrixImport()">⇧ Import Batch / Campus Matrix</button><button class="btn btn-secondary" onclick="batchMatrixTemplate()">Download Template</button>`:''}</div></div>${admin?`<div id="batchMatrixImportPanel" class="card-soft hidden" style="margin-bottom:14px"><div class="toolbar"><input id="batchMatrixFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleBatchMatrixFile(this)"></div><div class="muted small">Student fields: Branch_ID, Branch_Name, Programme, Category_Name, Campus_ID, Campus_Name, Batch_Code, Gender_Group, Expected_Strength. Faculty group fields: Record_Type=FACULTY_GROUP, Attendance_Group_Name=Trainee, Branch_ID, Campus_Name. Class/Batch may be blank for a faculty group.</div><div id="batchMatrixImportPreview" style="margin-top:10px"></div></div>`:''}<div class="table-wrap"><table class="data-table"><thead><tr><th>Type</th><th>Branch</th><th>Category / Group</th><th>Class</th><th>Campus</th><th>Batch / Group</th><th>Gender</th><th>Strength</th>${admin?'<th>Action</th>':''}</tr></thead><tbody>${rows.map(b=>{const fg=isFacultyAttendanceGroupBatch_(b);return `<tr data-batch-id="${escapeAttr(b.Batch_ID||'')}"><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${fg?'Faculty Group':'Student Batch'}</span></td><td>${escapeHtml(b.Branch_Name||b.Branch_ID||'')}</td><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${escapeHtml(fg?facultyGroupName_(b):(b.Category_Name||''))}</span></td><td>${escapeHtml(fg?'—':(b.Class_Name||batchClassName(b)||'—'))}</td><td>${escapeHtml(b.Campus_Name||'')}</td><td><b>${escapeHtml(fg?facultyGroupName_(b):(b.Batch_Code||b.Batch_Name||''))}</b></td><td>${escapeHtml(fg?'—':(b.Gender_Group||''))}</td><td>${fg?'—':Number(b.Expected_Strength||0).toLocaleString()}</td>${admin?`<td><button class="btn btn-secondary" onclick="batchEditRow('${escapeAttr(b.Batch_ID||'')}')">✎ Edit</button></td>`:''}</tr>`}).join('')}</tbody></table></div></div>`;
 }
 let managementReportCache={};
-function reportAuthorizedBranchIds_(){
-  if(isSuperAdmin()) return null;
-  const assigned=assignedBranchIds_();
-  if(assigned.length) return new Set(assigned);
-  const branch=String(state.session.user?.Branch_ID||'').trim();
-  return branch && branch!=='ALL' ? new Set([branch]) : null;
-}
-function reportRowAllowed_(row){
-  const ids=reportAuthorizedBranchIds_();
-  if(ids && !ids.has(String(row?.Branch_ID||'BR001').trim())) return false;
-  const role=String(state.session.user?.Role||'');
-  if(isSuperAdmin() || role==='Attendance Operator') return true;
-  const userCampus=String(state.session.user?.Campus_Name||'').trim().toLowerCase();
-  if(!userCampus) return true;
-  const rowCampus=String(row?.Campus_Name||row?.Campus||row?.Location_Name||'').trim().toLowerCase();
-  return !rowCampus || rowCampus===userCampus;
-}
 function reportScopedBatches(){
-  return (state.data.batches||[]).filter(b=>studentAttendanceBatch_(b)&&reportRowAllowed_(b));
+  const scope=isSuperAdmin()?'ALL':String(state.session.user?.Branch_ID||'BR001');
+  return (state.data.batches||[]).filter(b=>studentAttendanceBatch_(b)&&(scope==='ALL' || String(b.Branch_ID||'BR001')===scope));
 }
 function reportCampusOptions(selected=''){
-  const vals=new Set();
-  (state.data.campuses||[]).forEach(c=>{
-    if(!reportRowAllowed_(c)) return;
-    const n=String(c.Campus_Name||c.Campus||c.Location_Name||'').trim();
-    if(n) vals.add(n);
-  });
-  reportScopedBatches().forEach(b=>{
-    const n=String(b.Campus_Name||b.Campus||'').trim();
-    if(n) vals.add(n);
-  });
-  const ordered=[...vals].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
-  return `<option value="">All Campuses</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const vals=[...new Set(reportScopedBatches().map(b=>String(b.Campus_Name||b.Campus||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  return `<option value="">All Campuses</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function reportClassOptions(selected='', campusValue=''){
-  const vals=new Set();
-  const campusNeed=String(campusValue||'').trim().toLowerCase();
-  reportScopedBatches().filter(b=>!campusNeed || String(b.Campus_Name||b.Campus||'').trim().toLowerCase()===campusNeed).forEach(b=>{
-    const cls=batchClassName(b); if(cls) vals.add(cls);
-  });
-  (state.data.students||[]).filter(s=>reportRowAllowed_(s)&&(!campusNeed || String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase()===campusNeed)).forEach(s=>{
-    const cls=String(s.Class_Name||s.Class||'').trim(); if(cls) vals.add(cls);
-  });
-  const ordered=[...vals].sort();
-  return `<option value="">All Classes</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const vals=[...new Set(reportScopedBatches().filter(b=>!campusValue || String(b.Campus_Name||b.Campus||'')===String(campusValue)).map(batchClassName).filter(Boolean))].sort();
+  return `<option value="">All Classes</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function reportBatchOptions(selected='', campusValue='', classValue=''){
-  const vals=new Set();
-  const campusNeed=String(campusValue||'').trim().toLowerCase();
-  const classNeed=String(classValue||'').trim();
-  reportScopedBatches().filter(b=>(!campusNeed || String(b.Campus_Name||b.Campus||'').trim().toLowerCase()===campusNeed)&&(!classNeed || batchClassName(b)===classNeed)).forEach(b=>{
-    const code=String(b.Batch_Code||b.Batch||'').trim(); if(code) vals.add(code);
-  });
-  (state.data.students||[]).filter(s=>reportRowAllowed_(s)&&(!campusNeed || String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase()===campusNeed)&&(!classNeed || String(s.Class_Name||s.Class||'').trim()===classNeed)).forEach(s=>{
-    const code=String(s.Batch_Code||s.Batch||'').trim(); if(code) vals.add(code);
-  });
-  const ordered=[...vals].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
-  return `<option value="">All Batches</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const rows=reportScopedBatches().filter(b=>(!campusValue || String(b.Campus_Name||b.Campus||'')===String(campusValue))&&(!classValue || batchClassName(b)===String(classValue)));
+  const vals=[...new Set(rows.map(b=>String(b.Batch_Code||b.Batch||'').trim()).filter(Boolean))].sort();
+  return `<option value="">All Batches</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function updateManagementClassSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
@@ -2097,17 +2024,15 @@ function reportsHTML(){
   </div>`;
 }
 function currentScopedStudents(filters={}){
-  const campus=String(filters.campusName||'').trim().toLowerCase();
-  const cls=String(filters.className||'').trim();
-  const batch=String(filters.batchCode||'').trim();
+  const scope=isSuperAdmin()?'ALL':String(state.session.user?.Branch_ID||'BR001');
+  const campus=String(filters.campusName||'');
+  const cls=String(filters.className||'');
+  const batch=String(filters.batchCode||'');
   return (state.data.students||[]).filter(s=>{
-    if(!reportRowAllowed_(s)) return false;
-    const sc=String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase();
-    const ssClass=String(s.Class_Name||s.Class||'').trim();
-    const sbatch=String(s.Batch_Code||s.Batch||'').trim();
-    if(campus && sc!==campus) return false;
-    if(cls && ssClass!==cls) return false;
-    if(batch && sbatch!==batch) return false;
+    if(scope!=='ALL' && String(s.Branch_ID||'BR001')!==scope) return false;
+    if(campus && String(s.Campus_Name||s.Campus||s.Location_Name||'')!==campus) return false;
+    if(cls && String(s.Class_Name||s.Class||'')!==cls) return false;
+    if(batch && String(s.Batch_Code||s.Batch||'')!==batch) return false;
     return true;
   });
 }
@@ -2125,7 +2050,7 @@ function generateManagementReport(type){
   const campusName=document.getElementById('managementCampusFilter')?.value||'';
   const className=document.getElementById('managementClassFilter')?.value||'';
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
-  const reportDate=normalizeDateKey_(document.getElementById('managementDateFilter')?.value||state.date)||state.date; // report date is always compared as a local YYYY-MM-DD key
+  const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
   if(batchCode && !className){showToast('Select a class before choosing a batch.');return;}
   const students=currentScopedStudents({campusName,className,batchCode});
@@ -2137,7 +2062,7 @@ function generateManagementReport(type){
   if(type==='attendance'){
     title=`Daily Attendance Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Attendance'];
-    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
+    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();const a=today[u];return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),a?.Attendance_Status||'Not Marked'];});
   }else if(type==='movement'){
     title='Student Movement Register';
@@ -2156,20 +2081,16 @@ function generateManagementReport(type){
     title=`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`;
     headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
     const fa=state.data.facultyAttendance||[];
-    rows=fa.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).filter(a=>{
-      const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));
-      const aCampus=String(a.Campus_Name||a.Campus||b?.Campus_Name||b?.Campus||'').trim();
-      const aClass=String(a.Class_Name||b?.Class_Name||batchClassName(b)||'').trim();
-      const aBatch=String(a.Batch_Code||b?.Batch_Code||'').trim();
-      if(campusName && aCampus.toLowerCase()!==String(campusName).toLowerCase())return false;
-      if(className && aClass!==className)return false;
-      if(batchCode && aBatch!==batchCode)return false;
-      return reportRowAllowed_(a);
-    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||a.Batch_Code||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
+    rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
+      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
+      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
+      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
+      return true;
+    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
-    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
+    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
   }
   // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
@@ -2924,37 +2845,11 @@ function managementAttendanceSnapshotHTML(){
   </style><div class="ms-head"><div><h1>Attendance Management Snapshot</h1><p>Daily operational overview of students and faculty across the authorized campus scope.</p></div><div class="ms-badges"><span class="ms-badge">Date: ${escapeHtml(formatDate(snap.date||state.managementSnapshotDate))}</span><span class="ms-badge">Scope: ${escapeHtml(headerScope)}</span><span class="ms-badge">Generated: ${escapeHtml(new Date(snap.generatedAt||Date.now()).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))}</span></div></div>${managementSnapshotFiltersHtml_(snap)}<div class="ms-kpi-grid"><div class="ms-summary ms-summary-student"><div class="ms-summary-head">👥 Overall Student Attendance <span class="muted">(Visible Campuses)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Total Strength',Number(s.Eligible||0).toLocaleString(),'Eligible','blue')}${managementSnapshotMetric_('Present',Number(s.Present||0).toLocaleString(),'Students','green')}${managementSnapshotMetric_('Absent',Number(s.Absent||0).toLocaleString(),'Students','red')}${managementSnapshotMetric_('Sick',Number(s.Sick||0).toLocaleString(),'Students','purple')}${managementSnapshotMetric_('Leave',Number(s.Leave||0).toLocaleString(),'Students','orange')}${managementSnapshotMetric_('Not Marked',Number(s.Not_Marked||0).toLocaleString(),'Pending','gray')}${managementSnapshotMetric_('Attendance %',((snap.student?.attendancePct||0).toFixed(2)+'%'),'Present / Strength','blue')}</div></div><div class="ms-summary ms-summary-faculty"><div class="ms-summary-head">👨‍🏫 Overall Faculty Attendance <span class="muted">(Actual Arrival Status)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Faculty Strength',Number(f.facultyStrength||0).toLocaleString(),'Unique Faculty','green')}${managementSnapshotMetric_('Early',Number(f.early||0).toLocaleString(),'Arrival','green')}${managementSnapshotMetric_('On Time',Number(f.onTime||0).toLocaleString(),'Arrival','blue')}${managementSnapshotMetric_('Late 5–10',Number(f.late510||0).toLocaleString(),'Minutes','orange')}${managementSnapshotMetric_('Late >15',Number(f.late15||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Late >30',Number(f.late30||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Marked %',facultyMarkedPct.toFixed(2)+'%','Unique faculty marked','blue')}</div></div></div>${managementSnapshotChartsHtml_(snap)}${managementStudentTableHtml_(snap.student?.rows||[])}${managementFacultyTableHtml_(snap.faculty?.rows||[])}${managementDeploymentHtml_(snap.deployment||[])}${managementTraineeHtml_(snap.trainee||[])}</div>`;
 }
 function loadAttendanceManagementSnapshot(force=false){
-  if(state.page!=='attendanceSnapshot'||!roleAllowedPage('attendanceSnapshot')) return;
+  if(state.page!=='attendanceSnapshot'||!roleAllowedPage('attendanceSnapshot')||!isGAS()) return;
   if(state._managementSnapshotLoading&&!force)return;
   state._managementSnapshotLoading=true;
   const filters={date:state.managementSnapshotDate,branchId:state.managementSnapshotBranch,campusName:state.managementSnapshotCampus,categoryName:state.managementSnapshotCategory,className:state.managementSnapshotClass};
-  const applySnapshot=(res)=>{
-    state._managementSnapshotLoading=false;
-    state.managementSnapshot=res||null;
-    const c=document.getElementById('content');
-    if(c&&state.page==='attendanceSnapshot') c.innerHTML=managementAttendanceSnapshotHTML();
-  };
-  const showLoadError=(err)=>{
-    state._managementSnapshotLoading=false;
-    showToast(err?.message||'Could not load Management Snapshot');
-  };
-  if(isGAS()){
-    google.script.run
-      .withSuccessHandler(applySnapshot)
-      .withFailureHandler(showLoadError)
-      .getAttendanceManagementSnapshot(state.session.token,filters);
-    return;
-  }
-  fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'getAttendanceManagementSnapshot',args:[state.session.token,filters]})})
-    .then(async response=>{
-      const raw=await response.text();
-      let payload=null;
-      try{payload=JSON.parse(raw||'{}');}catch(e){throw new Error(`ERP API returned invalid JSON (HTTP ${response.status}).`);}
-      if(!response.ok||payload?.ok===false) throw new Error(payload?.error||`ERP API request failed (HTTP ${response.status}).`);
-      return payload;
-    })
-    .then(applySnapshot)
-    .catch(showLoadError);
+  google.script.run.withSuccessHandler(res=>{state._managementSnapshotLoading=false;state.managementSnapshot=res||null;const c=document.getElementById('content');if(c&&state.page==='attendanceSnapshot')c.innerHTML=managementAttendanceSnapshotHTML();}).withFailureHandler(err=>{state._managementSnapshotLoading=false;showToast(err?.message||'Could not load Management Snapshot');}).getAttendanceManagementSnapshot(state.session.token,filters);
 }
 function buildAttendanceManagementSnapshotPrintHtml_(){
   const root=document.getElementById('managementSnapshotRoot');
@@ -3029,12 +2924,7 @@ function printAttendanceManagementSnapshot(){
   w.document.open();w.document.write(html);w.document.close();w.focus();
   setTimeout(()=>{w.print();},450);
 }
-function saveAttendanceManagementSnapshotAsPdf(){
-  // The approved Management Snapshot print format is A4 landscape with
-  // repeated table headers and the same four-section report structure as the
-  // reference PDF. Keep this path separate from ordinary table report PDFs.
-  printAttendanceManagementSnapshot();
-}
+function saveAttendanceManagementSnapshotAsPdf(){printAttendanceManagementSnapshot();}
 function downloadAttendanceManagementSnapshotCsv(){
   const snap=state.managementSnapshot;if(!snap){showToast('Generate the snapshot first.');return;}
   const lines=[];
@@ -3082,21 +2972,9 @@ function handleResultFile(file){
     reader.readAsArrayBuffer(file);
   }
 }
-function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_mark','mathematics_marks','mathematics','maths'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
-function canonicalizeResultMathsRow_(r){
-  const out=Object.assign({},r||{});
-  const candidates=[out.Maths_Marks,out.Mathematics_Marks];
-  let value='';
-  for(const v of candidates){if(v!==undefined&&v!==null&&String(v).trim()!==''){value=String(v).trim();break;}}
-  const sn=String(out.Subject_Name||'').trim().toLowerCase();
-  if(!value&&(sn==='maths'||sn==='mathematics')){
-    value=out.Subject_Marks===undefined||out.Subject_Marks===null?'':String(out.Subject_Marks).trim();
-  }
-  if(value!=='') out.Maths_Marks=value;
-  return out;
-}
+function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_marks','mathematics_marks','mathematics'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
 function prepareResultImport(rawRows,fileName,uploadCategory=''){
-  const rows=normalizeResultRows(rawRows).map(canonicalizeResultMathsRow_);
+  const rows=normalizeResultRows(rawRows);
   const category=String(uploadCategory||'').trim();
   const errors=[];
   const seen=new Set();
