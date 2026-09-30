@@ -1,5 +1,5 @@
 /*
- * Cloudflare Pages compatibility bridge.updated
+ * Cloudflare Pages compatibility bridge.
  * Keeps the existing ERP UI/business workflow code unchanged by providing
  * the same google.script.run chaining shape over the /api Pages Function.
  */
@@ -2876,11 +2876,37 @@ function managementAttendanceSnapshotHTML(){
   </style><div class="ms-head"><div><h1>Attendance Management Snapshot</h1><p>Daily operational overview of students and faculty across the authorized campus scope.</p></div><div class="ms-badges"><span class="ms-badge">Date: ${escapeHtml(formatDate(snap.date||state.managementSnapshotDate))}</span><span class="ms-badge">Scope: ${escapeHtml(headerScope)}</span><span class="ms-badge">Generated: ${escapeHtml(new Date(snap.generatedAt||Date.now()).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))}</span></div></div>${managementSnapshotFiltersHtml_(snap)}<div class="ms-kpi-grid"><div class="ms-summary ms-summary-student"><div class="ms-summary-head">👥 Overall Student Attendance <span class="muted">(Visible Campuses)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Total Strength',Number(s.Eligible||0).toLocaleString(),'Eligible','blue')}${managementSnapshotMetric_('Present',Number(s.Present||0).toLocaleString(),'Students','green')}${managementSnapshotMetric_('Absent',Number(s.Absent||0).toLocaleString(),'Students','red')}${managementSnapshotMetric_('Sick',Number(s.Sick||0).toLocaleString(),'Students','purple')}${managementSnapshotMetric_('Leave',Number(s.Leave||0).toLocaleString(),'Students','orange')}${managementSnapshotMetric_('Not Marked',Number(s.Not_Marked||0).toLocaleString(),'Pending','gray')}${managementSnapshotMetric_('Attendance %',((snap.student?.attendancePct||0).toFixed(2)+'%'),'Present / Strength','blue')}</div></div><div class="ms-summary ms-summary-faculty"><div class="ms-summary-head">👨‍🏫 Overall Faculty Attendance <span class="muted">(Actual Arrival Status)</span></div><div class="ms-metrics">${managementSnapshotMetric_('Faculty Strength',Number(f.facultyStrength||0).toLocaleString(),'Unique Faculty','green')}${managementSnapshotMetric_('Early',Number(f.early||0).toLocaleString(),'Arrival','green')}${managementSnapshotMetric_('On Time',Number(f.onTime||0).toLocaleString(),'Arrival','blue')}${managementSnapshotMetric_('Late 5–10',Number(f.late510||0).toLocaleString(),'Minutes','orange')}${managementSnapshotMetric_('Late >15',Number(f.late15||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Late >30',Number(f.late30||0).toLocaleString(),'Minutes','red')}${managementSnapshotMetric_('Marked %',facultyMarkedPct.toFixed(2)+'%','Unique faculty marked','blue')}</div></div></div>${managementSnapshotChartsHtml_(snap)}${managementStudentTableHtml_(snap.student?.rows||[])}${managementFacultyTableHtml_(snap.faculty?.rows||[])}${managementDeploymentHtml_(snap.deployment||[])}${managementTraineeHtml_(snap.trainee||[])}</div>`;
 }
 function loadAttendanceManagementSnapshot(force=false){
-  if(state.page!=='attendanceSnapshot'||!roleAllowedPage('attendanceSnapshot')||!isGAS()) return;
+  if(state.page!=='attendanceSnapshot'||!roleAllowedPage('attendanceSnapshot')) return;
   if(state._managementSnapshotLoading&&!force)return;
   state._managementSnapshotLoading=true;
   const filters={date:state.managementSnapshotDate,branchId:state.managementSnapshotBranch,campusName:state.managementSnapshotCampus,categoryName:state.managementSnapshotCategory,className:state.managementSnapshotClass};
-  google.script.run.withSuccessHandler(res=>{state._managementSnapshotLoading=false;state.managementSnapshot=res||null;const c=document.getElementById('content');if(c&&state.page==='attendanceSnapshot')c.innerHTML=managementAttendanceSnapshotHTML();}).withFailureHandler(err=>{state._managementSnapshotLoading=false;showToast(err?.message||'Could not load Management Snapshot');}).getAttendanceManagementSnapshot(state.session.token,filters);
+  const applySnapshot=(res)=>{
+    state._managementSnapshotLoading=false;
+    state.managementSnapshot=res||null;
+    const c=document.getElementById('content');
+    if(c&&state.page==='attendanceSnapshot') c.innerHTML=managementAttendanceSnapshotHTML();
+  };
+  const showLoadError=(err)=>{
+    state._managementSnapshotLoading=false;
+    showToast(err?.message||'Could not load Management Snapshot');
+  };
+  if(isGAS()){
+    google.script.run
+      .withSuccessHandler(applySnapshot)
+      .withFailureHandler(showLoadError)
+      .getAttendanceManagementSnapshot(state.session.token,filters);
+    return;
+  }
+  fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'getAttendanceManagementSnapshot',args:[state.session.token,filters]})})
+    .then(async response=>{
+      const raw=await response.text();
+      let payload=null;
+      try{payload=JSON.parse(raw||'{}');}catch(e){throw new Error(`ERP API returned invalid JSON (HTTP ${response.status}).`);}
+      if(!response.ok||payload?.ok===false) throw new Error(payload?.error||`ERP API request failed (HTTP ${response.status}).`);
+      return payload;
+    })
+    .then(applySnapshot)
+    .catch(showLoadError);
 }
 function buildAttendanceManagementSnapshotPrintHtml_(){
   const root=document.getElementById('managementSnapshotRoot');
