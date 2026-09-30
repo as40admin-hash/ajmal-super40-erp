@@ -2001,22 +2001,64 @@ function batchesHTML(){
   return `<div class="card"><div class="section-title" style="margin-top:0"><div><h2>Batch / Campus Matrix</h2><span class="muted">${rows.length} matrix records • Student Batches + Faculty Groups</span></div><div class="toolbar">${admin?`<button class="btn btn-primary" onclick="openBatchMatrixImport()">⇧ Import Batch / Campus Matrix</button><button class="btn btn-secondary" onclick="batchMatrixTemplate()">Download Template</button>`:''}</div></div>${admin?`<div id="batchMatrixImportPanel" class="card-soft hidden" style="margin-bottom:14px"><div class="toolbar"><input id="batchMatrixFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleBatchMatrixFile(this)"></div><div class="muted small">Student fields: Branch_ID, Branch_Name, Programme, Category_Name, Campus_ID, Campus_Name, Batch_Code, Gender_Group, Expected_Strength. Faculty group fields: Record_Type=FACULTY_GROUP, Attendance_Group_Name=Trainee, Branch_ID, Campus_Name. Class/Batch may be blank for a faculty group.</div><div id="batchMatrixImportPreview" style="margin-top:10px"></div></div>`:''}<div class="table-wrap"><table class="data-table"><thead><tr><th>Type</th><th>Branch</th><th>Category / Group</th><th>Class</th><th>Campus</th><th>Batch / Group</th><th>Gender</th><th>Strength</th>${admin?'<th>Action</th>':''}</tr></thead><tbody>${rows.map(b=>{const fg=isFacultyAttendanceGroupBatch_(b);return `<tr data-batch-id="${escapeAttr(b.Batch_ID||'')}"><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${fg?'Faculty Group':'Student Batch'}</span></td><td>${escapeHtml(b.Branch_Name||b.Branch_ID||'')}</td><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${escapeHtml(fg?facultyGroupName_(b):(b.Category_Name||''))}</span></td><td>${escapeHtml(fg?'—':(b.Class_Name||batchClassName(b)||'—'))}</td><td>${escapeHtml(b.Campus_Name||'')}</td><td><b>${escapeHtml(fg?facultyGroupName_(b):(b.Batch_Code||b.Batch_Name||''))}</b></td><td>${escapeHtml(fg?'—':(b.Gender_Group||''))}</td><td>${fg?'—':Number(b.Expected_Strength||0).toLocaleString()}</td>${admin?`<td><button class="btn btn-secondary" onclick="batchEditRow('${escapeAttr(b.Batch_ID||'')}')">✎ Edit</button></td>`:''}</tr>`}).join('')}</tbody></table></div></div>`;
 }
 let managementReportCache={};
+function reportAuthorizedBranchIds_(){
+  if(isSuperAdmin()) return null;
+  const assigned=assignedBranchIds_();
+  if(assigned.length) return new Set(assigned);
+  const branch=String(state.session.user?.Branch_ID||'').trim();
+  return branch && branch!=='ALL' ? new Set([branch]) : null;
+}
+function reportRowAllowed_(row){
+  const ids=reportAuthorizedBranchIds_();
+  if(ids && !ids.has(String(row?.Branch_ID||'BR001').trim())) return false;
+  const role=String(state.session.user?.Role||'');
+  if(isSuperAdmin() || role==='Attendance Operator') return true;
+  const userCampus=String(state.session.user?.Campus_Name||'').trim().toLowerCase();
+  if(!userCampus) return true;
+  const rowCampus=String(row?.Campus_Name||row?.Campus||row?.Location_Name||'').trim().toLowerCase();
+  return !rowCampus || rowCampus===userCampus;
+}
 function reportScopedBatches(){
-  const scope=isSuperAdmin()?'ALL':String(state.session.user?.Branch_ID||'BR001');
-  return (state.data.batches||[]).filter(b=>studentAttendanceBatch_(b)&&(scope==='ALL' || String(b.Branch_ID||'BR001')===scope));
+  return (state.data.batches||[]).filter(b=>studentAttendanceBatch_(b)&&reportRowAllowed_(b));
 }
 function reportCampusOptions(selected=''){
-  const vals=[...new Set(reportScopedBatches().map(b=>String(b.Campus_Name||b.Campus||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
-  return `<option value="">All Campuses</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const vals=new Set();
+  (state.data.campuses||[]).forEach(c=>{
+    if(!reportRowAllowed_(c)) return;
+    const n=String(c.Campus_Name||c.Campus||c.Location_Name||'').trim();
+    if(n) vals.add(n);
+  });
+  reportScopedBatches().forEach(b=>{
+    const n=String(b.Campus_Name||b.Campus||'').trim();
+    if(n) vals.add(n);
+  });
+  const ordered=[...vals].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  return `<option value="">All Campuses</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function reportClassOptions(selected='', campusValue=''){
-  const vals=[...new Set(reportScopedBatches().filter(b=>!campusValue || String(b.Campus_Name||b.Campus||'')===String(campusValue)).map(batchClassName).filter(Boolean))].sort();
-  return `<option value="">All Classes</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const vals=new Set();
+  const campusNeed=String(campusValue||'').trim().toLowerCase();
+  reportScopedBatches().filter(b=>!campusNeed || String(b.Campus_Name||b.Campus||'').trim().toLowerCase()===campusNeed).forEach(b=>{
+    const cls=batchClassName(b); if(cls) vals.add(cls);
+  });
+  (state.data.students||[]).filter(s=>reportRowAllowed_(s)&&(!campusNeed || String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase()===campusNeed)).forEach(s=>{
+    const cls=String(s.Class_Name||s.Class||'').trim(); if(cls) vals.add(cls);
+  });
+  const ordered=[...vals].sort();
+  return `<option value="">All Classes</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function reportBatchOptions(selected='', campusValue='', classValue=''){
-  const rows=reportScopedBatches().filter(b=>(!campusValue || String(b.Campus_Name||b.Campus||'')===String(campusValue))&&(!classValue || batchClassName(b)===String(classValue)));
-  const vals=[...new Set(rows.map(b=>String(b.Batch_Code||b.Batch||'').trim()).filter(Boolean))].sort();
-  return `<option value="">All Batches</option>${vals.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+  const vals=new Set();
+  const campusNeed=String(campusValue||'').trim().toLowerCase();
+  const classNeed=String(classValue||'').trim();
+  reportScopedBatches().filter(b=>(!campusNeed || String(b.Campus_Name||b.Campus||'').trim().toLowerCase()===campusNeed)&&(!classNeed || batchClassName(b)===classNeed)).forEach(b=>{
+    const code=String(b.Batch_Code||b.Batch||'').trim(); if(code) vals.add(code);
+  });
+  (state.data.students||[]).filter(s=>reportRowAllowed_(s)&&(!campusNeed || String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase()===campusNeed)&&(!classNeed || String(s.Class_Name||s.Class||'').trim()===classNeed)).forEach(s=>{
+    const code=String(s.Batch_Code||s.Batch||'').trim(); if(code) vals.add(code);
+  });
+  const ordered=[...vals].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:'base'}));
+  return `<option value="">All Batches</option>${ordered.map(v=>`<option value="${escapeAttr(v)}" ${String(v)===String(selected)?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
 }
 function updateManagementClassSelect(){
   const campus=document.getElementById('managementCampusFilter')?.value||'';
@@ -2055,15 +2097,17 @@ function reportsHTML(){
   </div>`;
 }
 function currentScopedStudents(filters={}){
-  const scope=isSuperAdmin()?'ALL':String(state.session.user?.Branch_ID||'BR001');
-  const campus=String(filters.campusName||'');
-  const cls=String(filters.className||'');
-  const batch=String(filters.batchCode||'');
+  const campus=String(filters.campusName||'').trim().toLowerCase();
+  const cls=String(filters.className||'').trim();
+  const batch=String(filters.batchCode||'').trim();
   return (state.data.students||[]).filter(s=>{
-    if(scope!=='ALL' && String(s.Branch_ID||'BR001')!==scope) return false;
-    if(campus && String(s.Campus_Name||s.Campus||s.Location_Name||'')!==campus) return false;
-    if(cls && String(s.Class_Name||s.Class||'')!==cls) return false;
-    if(batch && String(s.Batch_Code||s.Batch||'')!==batch) return false;
+    if(!reportRowAllowed_(s)) return false;
+    const sc=String(s.Campus_Name||s.Campus||s.Location_Name||'').trim().toLowerCase();
+    const ssClass=String(s.Class_Name||s.Class||'').trim();
+    const sbatch=String(s.Batch_Code||s.Batch||'').trim();
+    if(campus && sc!==campus) return false;
+    if(cls && ssClass!==cls) return false;
+    if(batch && sbatch!==batch) return false;
     return true;
   });
 }
@@ -2113,11 +2157,15 @@ function generateManagementReport(type){
     headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
     const fa=state.data.facultyAttendance||[];
     rows=fa.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).filter(a=>{
-      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
-      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
-      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
-      return true;
-    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
+      const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));
+      const aCampus=String(a.Campus_Name||a.Campus||b?.Campus_Name||b?.Campus||'').trim();
+      const aClass=String(a.Class_Name||b?.Class_Name||batchClassName(b)||'').trim();
+      const aBatch=String(a.Batch_Code||b?.Batch_Code||'').trim();
+      if(campusName && aCampus.toLowerCase()!==String(campusName).toLowerCase())return false;
+      if(className && aClass!==className)return false;
+      if(batchCode && aBatch!==batchCode)return false;
+      return reportRowAllowed_(a);
+    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||a.Batch_Code||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
@@ -2981,7 +3029,12 @@ function printAttendanceManagementSnapshot(){
   w.document.open();w.document.write(html);w.document.close();w.focus();
   setTimeout(()=>{w.print();},450);
 }
-function saveAttendanceManagementSnapshotAsPdf(){printAttendanceManagementSnapshot();}
+function saveAttendanceManagementSnapshotAsPdf(){
+  // The approved Management Snapshot print format is A4 landscape with
+  // repeated table headers and the same four-section report structure as the
+  // reference PDF. Keep this path separate from ordinary table report PDFs.
+  printAttendanceManagementSnapshot();
+}
 function downloadAttendanceManagementSnapshotCsv(){
   const snap=state.managementSnapshot;if(!snap){showToast('Generate the snapshot first.');return;}
   const lines=[];
