@@ -3003,9 +3003,21 @@ function handleResultFile(file){
     reader.readAsArrayBuffer(file);
   }
 }
-function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_marks','mathematics_marks','mathematics'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
+function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_mark','mathematics_marks','mathematics','maths'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
+function canonicalizeResultMathsRow_(r){
+  const out=Object.assign({},r||{});
+  const candidates=[out.Maths_Marks,out.Mathematics_Marks];
+  let value='';
+  for(const v of candidates){if(v!==undefined&&v!==null&&String(v).trim()!==''){value=String(v).trim();break;}}
+  const sn=String(out.Subject_Name||'').trim().toLowerCase();
+  if(!value&&(sn==='maths'||sn==='mathematics')){
+    value=out.Subject_Marks===undefined||out.Subject_Marks===null?'':String(out.Subject_Marks).trim();
+  }
+  if(value!=='') out.Maths_Marks=value;
+  return out;
+}
 function prepareResultImport(rawRows,fileName,uploadCategory=''){
-  const rows=normalizeResultRows(rawRows);
+  const rows=normalizeResultRows(rawRows).map(canonicalizeResultMathsRow_);
   const category=String(uploadCategory||'').trim();
   const errors=[];
   const seen=new Set();
