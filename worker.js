@@ -95,32 +95,15 @@ async function handleApi_(request, env) {
       }
     }
 
-    const responseBody = text || JSON.stringify({ ok: false, error: 'Empty backend response.' });
-    const responseHeaders = {
-      ...headers,
-      'Content-Type': contentType || 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store, no-cache, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    };
-
-    // Personalized ERP JSON must remain uncached, but compressing it in the
-    // Worker significantly reduces transfer time for larger bootstrap/report
-    // responses. Never double-compress an upstream encoded response.
-    const acceptsGzip = /(^|,)\s*gzip\s*(,|$)/i.test(request.headers.get('Accept-Encoding') || '');
-    const alreadyEncoded = !!upstream.headers.get('Content-Encoding');
-    if(acceptsGzip && !alreadyEncoded && responseBody.length >= 4096 && typeof CompressionStream !== 'undefined'){
-      responseHeaders['Content-Encoding'] = 'gzip';
-      responseHeaders['Vary'] = 'Accept-Encoding';
-      return new Response(new Blob([responseBody]).stream().pipeThrough(new CompressionStream('gzip')), {
-        status: upstream.status,
-        headers: responseHeaders
-      });
-    }
-
-    return new Response(responseBody, {
+    return new Response(text || JSON.stringify({ ok: false, error: 'Empty backend response.' }), {
       status: upstream.status,
-      headers: responseHeaders
+      headers: {
+        ...headers,
+        'Content-Type': contentType || 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
   } catch (err) {
     return jsonResponse_({
@@ -150,28 +133,22 @@ export default {
         /^text\//i.test(contentType) ||
         /javascript|json|xml|svg/i.test(contentType);
 
-      const assetHeaders = new Headers(assetResponse.headers);
-      const pathname = url.pathname.toLowerCase();
-      const isHtml = /\.html?$/.test(pathname) || pathname === '/';
-      const isVersioned = url.searchParams.has('v') || /[-._](?:20\d{6}|v?\d+)$/.test(pathname.replace(/\.[^.]+$/,''));
-
       if (isTextAsset && !/charset=/i.test(contentType)) {
-        assetHeaders.set('Content-Type', `${contentType}; charset=utf-8`);
+        const headers = new Headers(assetResponse.headers);
+
+        headers.set(
+          'Content-Type',
+          `${contentType}; charset=utf-8`
+        );
+
+        return new Response(assetResponse.body, {
+          status: assetResponse.status,
+          statusText: assetResponse.statusText,
+          headers
+        });
       }
 
-      if(isHtml){
-        assetHeaders.set('Cache-Control','no-cache, must-revalidate');
-      }else if(isVersioned){
-        assetHeaders.set('Cache-Control','public, max-age=31536000, immutable');
-      }else if(/\.(?:js|css|svg|png|jpg|jpeg|webp|ico|woff2?)$/i.test(pathname)){
-        assetHeaders.set('Cache-Control','public, max-age=86400, stale-while-revalidate=604800');
-      }
-
-      return new Response(assetResponse.body, {
-        status: assetResponse.status,
-        statusText: assetResponse.statusText,
-        headers: assetHeaders
-      });
+      return assetResponse;
     }
 
     return new Response('ERP static asset binding is not configured.', {
