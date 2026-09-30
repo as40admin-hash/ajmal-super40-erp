@@ -1010,7 +1010,7 @@ function facultyAllowed(){return ['Super Admin','Admin','Academic Admin','Campus
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return r==='Campus Admin' || (!isSuperAdmin() && !!String(state.session.user?.Campus_ID||state.session.user?.Campus_Name||'').trim() && r!=='Attendance Operator');}
 function attendanceOperatorUser(){return String(state.session.user?.Role||'')==='Attendance Operator';}
 function assignedCampusName_(){return String(state.session.user?.Campus_Name||'').trim();}
-function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(r),attendanceSnapshot:['Super Admin','Admin','Academic Admin'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Academic Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Campus Admin','Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
+function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(page==='attendanceSnapshot' && r==='Admin' && !isAllBranchUserAdmin()) return false; if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(r),attendanceSnapshot:['Super Admin','Admin','Academic Admin'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Academic Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Campus Admin','Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
 function facultyBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function facultyBatches(){
   const branch=facultyBranch();
@@ -2750,7 +2750,7 @@ function runResultSummary(targetId,p){if(isGAS()){google.script.run.withSuccessH
 function managementSnapshotBranchOptions_(){
   const role=String(state.session.user?.Role||'');
   const allowed=(state.data.branches||[]).filter(b=>String(b.Active_Flag??'TRUE').toUpperCase()!=='FALSE');
-  if(role==='Super Admin'||(role==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL')) return [{Branch_ID:'ALL',Branch_Name:'All Branches'},...allowed];
+  if(role==='Super Admin'||(role==='Admin'&&isAllBranchUserAdmin())) return [{Branch_ID:'ALL',Branch_Name:'All Branches'},...allowed];
   if(role==='Academic Admin'){
     const ids=new Set(Array.isArray(state.session.user?.Assigned_Branch_IDs)?state.session.user.Assigned_Branch_IDs.map(String):String(state.session.user?.Assigned_Branch_IDs||'').split(/[;,\n]+/).map(s=>s.trim()).filter(Boolean));
     const rows=allowed.filter(b=>ids.has(String(b.Branch_ID))); return [{Branch_ID:'ALL',Branch_Name:'All Assigned Branches'},...rows];
@@ -2767,7 +2767,7 @@ function managementSnapshotMetric_(label,value,sub,tone){
 function managementSnapshotFiltersHtml_(snap){
   const branches=managementSnapshotBranchOptions_();
   const role=String(state.session.user?.Role||'');
-  const branchLocked=!(role==='Super Admin'||(role==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL')||role==='Academic Admin');
+  const branchLocked=!(role==='Super Admin'||(role==='Admin'&&isAllBranchUserAdmin())||role==='Academic Admin');
   const campuses=snap?.campusOptions||[];
   const cats=snap?.categoryOptions||[];
   const classes=snap?.classOptions||[];
