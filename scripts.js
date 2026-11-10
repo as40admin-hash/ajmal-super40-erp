@@ -293,7 +293,7 @@ function refreshDashboardFacultyAttendance_(renderAfter=true){
     .withFailureHandler(()=>{
       state._dashboardFacultyInFlight=false;
     })
-    .getFacultyAttendanceOptions(token,{branchId:requestedBranch,date:dateKey});
+    .getDashboardFacultyAttendance(token,{branchId:requestedBranch,date:dateKey});
 }
 
 function refreshDashboardSnapshot(renderAfter=true){
@@ -320,7 +320,7 @@ function startDashboardLiveRefresh(){
   // Cross-user attendance changes are reflected without waiting for the
   // previous 2-minute refresh window. Post-save updates are still immediate.
   state._dashboardSyncTimer=setInterval(()=>{
-    if(state.page==='dashboard' && isGAS() && state.session.token && !activeEditorNeedsProtection_()){
+    if(!document.hidden && state.page==='dashboard' && isGAS() && state.session.token && !activeEditorNeedsProtection_()){
       refreshDashboardSnapshot(true);
       refreshDashboardFacultyAttendance_(true);
     }
@@ -495,7 +495,7 @@ function startAttendanceLiveRefresh(){
   // authorised user appear without a manual page refresh. Active edits are
   // protected so a remote update never destroys unsaved selections.
   state._attendanceLiveTimer=setInterval(()=>{
-    if(state.page!=='attendance' || !isGAS() || !state.session.token) return;
+    if(document.hidden || state.page!=='attendance' || !isGAS() || !state.session.token) return;
     if(state._attendanceLiveInFlight || state._serverSyncInFlight || activeEditorNeedsProtection_()) return;
 
     if(state.attendanceMode==='faculty'){
@@ -947,21 +947,7 @@ function onAdminUserRoleOrBranchChanged(){
 function handleAdminBranchChanged(){ onAdminUserRoleOrBranchChanged(); }
 function isSuperAdmin(){return String(state.session.user?.Role||'')==='Super Admin'||(String(state.session.user?.Role||'')==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL');}
 function isActualSuperAdmin(){return String(state.session.user?.Role||'')==='Super Admin';}
-function isAllBranchUserAdmin(){
-  const r=String(state.session.user?.Role||'');
-  if(r==='Super Admin') return true;
-  if(r!=='Admin') return false;
-  if(String(state.session.user?.Branch_ID||'').trim()==='ALL') return true;
-  const allBranchIds=(state.data.branches||[]).map(b=>String(b.Branch_ID||'').trim()).filter(Boolean);
-  const raw=state.session.user?.Assigned_Branch_IDs;
-  const assigned=Array.isArray(raw)
-    ? [...new Set(raw.map(x=>String(x||'').trim()).filter(Boolean))]
-    : String(raw||'').split(/[,\n;]+/).map(x=>String(x||'').trim()).filter(Boolean);
-  if(!allBranchIds.length) return false;
-  const set=new Set(assigned);
-  return allBranchIds.every(id=>set.has(id));
-}
-function canManageProtectedSettings(){return isAllBranchUserAdmin();}
+function canManageProtectedSettings(){const r=String(state.session.user?.Role||'');return r==='Super Admin'||r==='Admin';}
 function canManageFacultyMaster(){const r=String(state.session.user?.Role||'');return r==='Super Admin'||r==='Academic Admin'||r==='Admin';}
 function effectiveUiBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function isFacultyAttendanceGroupBatch_(b){const r=b||{};const type=String(r.Record_Type||'').trim().toUpperCase();const group=String(r.Attendance_Group_Name||'').trim().toLowerCase();const category=String(r.Category_Name||'').trim().toLowerCase();return type==='FACULTY_GROUP'||type==='FACULTY ATTENDANCE GROUP'||group==='trainee'||category==='trainee';}
@@ -1010,7 +996,7 @@ function facultyAllowed(){return ['Super Admin','Admin','Academic Admin','Campus
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return r==='Campus Admin' || (!isSuperAdmin() && !!String(state.session.user?.Campus_ID||state.session.user?.Campus_Name||'').trim() && r!=='Attendance Operator');}
 function attendanceOperatorUser(){return String(state.session.user?.Role||'')==='Attendance Operator';}
 function assignedCampusName_(){return String(state.session.user?.Campus_Name||'').trim();}
-function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(page==='attendanceSnapshot' && r==='Admin' && !isAllBranchUserAdmin()) return false; if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(r),attendanceSnapshot:['Super Admin','Admin','Academic Admin'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Academic Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Campus Admin','Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
+function roleAllowedPage(page){const r=String(state.session.user?.Role||''); if(isSuperAdmin()||r==='Admin') return true; const map={dashboard:r!=='Result Operator',attendance:['Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(r),attendanceSnapshot:['Super Admin','Admin','Academic Admin'].includes(r),students:['Campus Admin','Attendance Operator','Academic Admin','Viewer'].includes(r),uinimport:false,movements:['Campus Admin','Attendance Operator'].includes(r),calendar:['Academic Admin'].includes(r),batches:['Academic Admin'].includes(r),reports:['Campus Admin','Attendance Operator','Result Operator','Academic Admin','Viewer'].includes(r),results:['Campus Admin','Result Operator','Academic Admin'].includes(r),faculty:['Academic Admin'].includes(r),settings:true}; if(page==='faculty' && (r==='Super Admin'||r==='Admin'||r==='Academic Admin')) return true; return map[page]||false;}
 function facultyBranch(){return isSuperAdmin()?String(state.branchFilter||'ALL'):String(state.session.user?.Branch_ID||'BR001');}
 function facultyBatches(){
   const branch=facultyBranch();
@@ -1064,7 +1050,38 @@ function facultyResetDownstream(level){
   if(level<3) state.facultyCampusFilter='';
   if(level<4) state.facultyBatchFilter='';
 }
-function normalizeDateKey_(v){const d=v instanceof Date?v:new Date(v);if(!isNaN(d.getTime()))return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return String(v||'').slice(0,10);}
+function normalizeDateKey_(v){
+  if(v===null||v===undefined||v==='') return '';
+  if(v instanceof Date){
+    if(isNaN(v.getTime())) return '';
+    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  }
+  const s=String(v).trim();
+  if(!s) return '';
+
+  // Preserve date-only values exactly as supplied by <input type="date">
+  // or spreadsheet text. Do NOT slice ISO timestamps before parsing:
+  // Apps Script serializes Spreadsheet Date objects to ISO/UTC, and slicing
+  // the UTC portion can move an India-local date to the previous calendar day.
+  let m=s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:$|[T\s])/);
+  if(m && !/T|Z|[+-]\d{2}:?\d{2}$/.test(s)){
+    return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+  }
+
+  m=s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if(m){
+    const a=Number(m[1]),b=Number(m[2]),y=m[3];
+    const month=a>12?b:a;
+    const day=a>12?a:b;
+    if(month>=1&&month<=12&&day>=1&&day<=31) return `${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  }
+
+  // Parse ISO timestamps as real instants first, then use the user's local
+  // calendar date. This correctly reverses Apps Script's UTC serialization.
+  const d=new Date(s);
+  if(!isNaN(d.getTime())) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  return s.slice(0,10);
+}
 function facultyAssignmentsForBatch_(batchId){
   const assignments=state.facultyOptions.assignments||[];
   return assignments.filter(a=>String(a.Active_Flag||'TRUE').toUpperCase()!=='FALSE' && String(a.Batch_ID||'')===String(batchId));
@@ -2064,7 +2081,7 @@ function generateManagementReport(type){
   const campusName=document.getElementById('managementCampusFilter')?.value||'';
   const className=document.getElementById('managementClassFilter')?.value||'';
   const batchCode=document.getElementById('managementBatchFilter')?.value||'';
-  const reportDate=document.getElementById('managementDateFilter')?.value||state.date;
+  const reportDate=normalizeDateKey_(document.getElementById('managementDateFilter')?.value||state.date)||state.date; // report date is always compared as a local YYYY-MM-DD key
   if((className||batchCode) && !campusName){showToast('Select a campus first.');return;}
   if(batchCode && !className){showToast('Select a class before choosing a batch.');return;}
   const students=currentScopedStudents({campusName,className,batchCode});
@@ -2076,7 +2093,7 @@ function generateManagementReport(type){
   if(type==='attendance'){
     title=`Daily Attendance Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Attendance'];
-    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
+    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();const a=today[u];return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),a?.Attendance_Status||'Not Marked'];});
   }else if(type==='movement'){
     title='Student Movement Register';
@@ -2095,20 +2112,16 @@ function generateManagementReport(type){
     title=`Faculty / Teacher Attendance Report • ${formatDate(reportDate)}`;
     headers=['Date','Branch','Batch','Faculty','Subject','Attendance Status','Remarks'];
     const fa=state.data.facultyAttendance||[];
-    rows=fa.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).filter(a=>{
-      const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));
-      const rowCampus=managementCampusName(a)||String(b?.Campus_Name||b?.Campus||'');
-      const rowClass=String(a.Class_Name||a.Class||'').trim()||batchClassName(b);
-      const rowBatch=String(a.Batch_Code||a.Batch||'').trim()||String(b?.Batch_Code||b?.Batch||'').trim();
-      if(campusName && rowCampus!==campusName)return false;
-      if(className && rowClass!==className)return false;
-      if(batchCode && rowBatch!==batchCode)return false;
+    rows=fa.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).filter(a=>{
+      if(campusName){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Campus_Name||b?.Campus||'')!==campusName)return false;}
+      if(className){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(batchClassName(b)!==className)return false;}
+      if(batchCode){const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===String(a.Batch_ID));if(String(b?.Batch_Code||'')!==batchCode)return false;}
       return true;
-    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName(a)||a.Batch_Code||a.Batch_Name||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
+    }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
     headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
-    const today={};att.filter(a=>String(a.Attendance_Date||'').slice(0,10)===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
+    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
     rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
   }
   // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
@@ -2427,14 +2440,14 @@ function settingsHTML(){
     ${canManageSettings?`<div class="card"><h2 style="font-size:16px;margin-top:0">Brand Theme</h2><p class="muted small">AJMAL SUPER 40 brand palette is applied across the ERP. Light and dark mode are available from the top-right theme control.</p><div class="list"><div class="list-item"><span>Primary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-primary')}</b></div><div class="list-item"><span>Secondary</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-secondary')}</b></div><div class="list-item"><span>Accent</span><b>${getComputedStyle(document.documentElement).getPropertyValue('--brand-accent')}</b></div></div></div>`:''}
     ${showAttendanceDefaults?`<div class="card"><h2 style="font-size:16px;margin-top:0">Attendance Defaults</h2><div class="grid grid-2"><div><label class="small muted">Default start</label><input id="attendanceWindowStart" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_START')?.Value||'')}"></div><div><label class="small muted">Default end</label><input id="attendanceWindowEnd" type="time" class="input" value="${String((state.data.settings||[]).find(x=>String(x.Key)==='ATTENDANCE_DEFAULT_END')?.Value||'')}"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-primary" onclick="saveAttendanceSettings()">Save Attendance Window</button></div><div class="list" style="margin-top:10px"><div class="list-item">Operator <b>Campus/Location Incharge</b></div><div class="list-item">Frequency <b>Once per day</b></div><div class="list-item">Holiday suppression <b>Automatic</b></div></div></div>`:''}
   </div>
-  <div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2>User Access & Password Control</h2><div class="muted">Change your own password. Only Super Admin and all-branch User Admin can manage the protected settings controls; every authenticated user can change their own password.</div></div><span class="badge ${canManageSettings?'badge-green':'badge-blue'}">${canManageSettings?'SETTINGS ADMIN':'AUTHENTICATED USER'}</span></div>
+  <div class="card" style="margin-top:16px"><div class="section-title" style="margin-top:0"><div><h2>User Access & Password Control</h2><div class="muted">Change your own password. Only Super Admin and Admin can manage the protected settings controls; every authenticated user can change their own password.</div></div><span class="badge ${canManageSettings?'badge-green':'badge-blue'}">${canManageSettings?'SETTINGS ADMIN':'AUTHENTICATED USER'}</span></div>
     <div class="grid grid-3">
       <div><label class="small muted">Current password</label><input id="currentPwd" class="input" type="password"></div>
       <div><label class="small muted">New password</label><input id="newPwd" class="input" type="password"></div>
       <div><label class="small muted">Confirm new password</label><input id="confirmPwd" class="input" type="password"></div>
     </div>
     <div class="toolbar" style="margin-top:12px"><button class="btn btn-primary" onclick="changeOwnPassword()">Change My Password</button></div>
-    ${canManageSettings?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN &amp; ALL-BRANCH ADMIN</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS GN_School','AMRS_GN_SCHOOL')">Prefill AMRS GN_School User</button><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS Jugijan','AMRS_JUGIJAN')">Prefill AMRS Jugijan User</button></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>`;
+    ${canManageSettings?`<div class="admin-user-panel"><div class="section-title" style="margin-top:18px"><div><h3 style="margin:0">User Management</h3><div class="muted">Create, edit, disable and scope ERP users. Admin and Attendance Operator use the same Branch → Campus scope; Attendance Operator also requires explicit batch assignments.</div></div><span class="badge badge-red">SUPER ADMIN &amp; ADMIN</span></div><input type="hidden" id="adminOriginalUserId"><div class="grid grid-4"><input id="adminUserId" class="input" placeholder="User ID"><input id="adminUserName" class="input" placeholder="User name"><select id="adminRole" class="select" onchange="onAdminUserRoleOrBranchChanged()"><option>Admin</option><option>Super Admin</option><option>Campus Admin</option><option>Attendance Operator</option><option>Result Operator</option><option>Academic Admin</option></select><select id="adminBranch" class="select" onchange="handleAdminBranchChanged()"><option value="ALL">All Branches</option>${branchOptionsHtml()}</select><div><select id="adminCampus" class="select"><option value="">All / No Specific Campus</option></select><div id="adminCampusHint" class="muted small" style="margin-top:4px">Optional when All Branches is selected.</div></div><input id="adminUserPassword" class="input" type="password" placeholder="New password (leave blank to keep existing)"><label class="checkline"><input id="adminUserActive" type="checkbox" checked> Active account</label></div><div id="attendanceBatchAssignmentPanel" class="card-soft" style="display:none;margin-top:12px"><div class="section-title" style="margin:0 0 8px"><div><b>Assigned Batches for Attendance Operator</b><div class="muted small">Select one or more batches directly from the existing Batch List. Only these batches and their associated data will be available to the operator.</div></div><span id="attendanceBatchAssignmentCount" class="badge badge-blue">0 selected</span></div><input id="attendanceBatchAssignmentSearch" class="input" placeholder="Search Batch Code / Category / Campus / Class" oninput="filterAttendanceBatchAssignmentList()"><div id="attendanceBatchAssignmentList" class="batch-assignment-list"></div></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS GN_School','AMRS_GN_SCHOOL')">Prefill AMRS GN_School User</button><button class="btn btn-secondary" onclick="prefillAMRSCampusUser('AMRS Jugijan','AMRS_JUGIJAN')">Prefill AMRS Jugijan User</button></div><div class="toolbar" style="margin-top:10px"><button class="btn btn-secondary" onclick="adminSaveUser()">Create / Update User</button><button class="btn btn-secondary" onclick="loadUsers()">Refresh User List</button></div><div id="userList" class="list" style="margin-top:12px"></div></div>`:''}  </div>`;
 }
 
 function saveAttendanceSettings(){
@@ -2750,7 +2763,7 @@ function runResultSummary(targetId,p){if(isGAS()){google.script.run.withSuccessH
 function managementSnapshotBranchOptions_(){
   const role=String(state.session.user?.Role||'');
   const allowed=(state.data.branches||[]).filter(b=>String(b.Active_Flag??'TRUE').toUpperCase()!=='FALSE');
-  if(role==='Super Admin'||(role==='Admin'&&isAllBranchUserAdmin())) return [{Branch_ID:'ALL',Branch_Name:'All Branches'},...allowed];
+  if(role==='Super Admin'||(role==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL')) return [{Branch_ID:'ALL',Branch_Name:'All Branches'},...allowed];
   if(role==='Academic Admin'){
     const ids=new Set(Array.isArray(state.session.user?.Assigned_Branch_IDs)?state.session.user.Assigned_Branch_IDs.map(String):String(state.session.user?.Assigned_Branch_IDs||'').split(/[;,\n]+/).map(s=>s.trim()).filter(Boolean));
     const rows=allowed.filter(b=>ids.has(String(b.Branch_ID))); return [{Branch_ID:'ALL',Branch_Name:'All Assigned Branches'},...rows];
@@ -2767,7 +2780,7 @@ function managementSnapshotMetric_(label,value,sub,tone){
 function managementSnapshotFiltersHtml_(snap){
   const branches=managementSnapshotBranchOptions_();
   const role=String(state.session.user?.Role||'');
-  const branchLocked=!(role==='Super Admin'||(role==='Admin'&&isAllBranchUserAdmin())||role==='Academic Admin');
+  const branchLocked=!(role==='Super Admin'||(role==='Admin'&&String(state.session.user?.Branch_ID||'')==='ALL')||role==='Academic Admin');
   const campuses=snap?.campusOptions||[];
   const cats=snap?.categoryOptions||[];
   const classes=snap?.classOptions||[];
@@ -2990,9 +3003,21 @@ function handleResultFile(file){
     reader.readAsArrayBuffer(file);
   }
 }
-function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_marks','mathematics_marks','mathematics'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
+function normalizeResultRows(rows){const aliases={UIN:['uin','student_uin'],Exam_ID:['exam_id','test_id','exam_code'],Exam_Name:['exam_name','exam','test_name','mock_test'],Exam_Date:['exam_date','test_date','date'],Programme:['programme','program'],Class_Name:['class_name','class','standard'],Category_Name:['category_name','category'],Batch_Code:['batch_code','batch','batch_name'],Campus_Name:['campus_name','campus','location'],Branch_ID:['branch_id','branch','institute_branch'],Branch_Name:['branch_name','branch_title'],Subject_Name:['subject_name','subject'],Subject_Marks:['subject_marks','marks_obtained','marks'],Max_Subject_Marks:['max_subject_marks','subject_max_marks'],Physics_Marks:['physics_marks','physics'],Chemistry_Marks:['chemistry_marks','chemistry'],Botany_Marks:['botany_marks','botany'],Zoology_Marks:['zoology_marks','zoology'],Biology_Marks:['biology_marks','biology'],Maths_Marks:['maths_marks','math_mark','mathematics_marks','mathematics','maths'],Mathematics_Marks:['mathematics_marks','mathematics'],Total_Obtained_Marks:['total_obtained_marks','obtained_total','total_marks','total','marks_total','score'],Total_Max_Marks:['total_max_marks','max_total_marks','max_marks','maximum_marks','total_max'],Percentage:['percentage','percent','percentage_score'],Rank:['rank','air','overall_rank'],Result_Status:['result_status','status']};return rows.map(src=>{const norm={};Object.keys(src).forEach(k=>norm[normalizeHeader(k)]=src[k]);const out={};Object.entries(aliases).forEach(([dest,als])=>{const hit=als.find(a=>Object.prototype.hasOwnProperty.call(norm,a));if(hit)out[dest]=dest==='UIN'?normalizeUIN(norm[hit]):String(norm[hit]).trim();});Object.keys(src).forEach(k=>{const nk=normalizeHeader(k);if(!Object.values(aliases).flat().includes(nk))out['EXTRA_'+k]=src[k];});return out;})}
+function canonicalizeResultMathsRow_(r){
+  const out=Object.assign({},r||{});
+  const candidates=[out.Maths_Marks,out.Mathematics_Marks];
+  let value='';
+  for(const v of candidates){if(v!==undefined&&v!==null&&String(v).trim()!==''){value=String(v).trim();break;}}
+  const sn=String(out.Subject_Name||'').trim().toLowerCase();
+  if(!value&&(sn==='maths'||sn==='mathematics')){
+    value=out.Subject_Marks===undefined||out.Subject_Marks===null?'':String(out.Subject_Marks).trim();
+  }
+  if(value!=='') out.Maths_Marks=value;
+  return out;
+}
 function prepareResultImport(rawRows,fileName,uploadCategory=''){
-  const rows=normalizeResultRows(rawRows);
+  const rows=normalizeResultRows(rawRows).map(canonicalizeResultMathsRow_);
   const category=String(uploadCategory||'').trim();
   const errors=[];
   const seen=new Set();
