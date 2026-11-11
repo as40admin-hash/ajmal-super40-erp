@@ -1767,7 +1767,7 @@ function attendancePopupCountCard_(batch){
     ['sick','Sick',x.Sick]
   ];
   return `<section class="batch-count-row attendance-count-card" data-batch-id="${escapeAttr(batch.Batch_ID)}" data-attendance-required="${disabled?'false':'true'}">
-    <div class="attendance-count-card-head"><div class="attendance-count-identity"><span class="attendance-count-kicker">${escapeHtml(batch.Category_Name||batch.Category||'STUDENT BATCH')}</span><h3>${escapeHtml(batch.Batch_Code||batch.Batch_Name||'Batch')}</h3><p>${escapeHtml(classFromBatch_(batch))} <span>•</span> ${escapeHtml(batch.Campus_Name||batch.Campus||'Campus')}</p></div><span class="badge ${disabled?'badge-yellow':x.status==='Completed'?'badge-green':x.status==='In Progress'?'badge-blue':'badge-yellow'}">${disabled?'Not required':escapeHtml(x.status)}</span></div>
+    <div class="attendance-count-card-head"><div class="attendance-count-identity"><span class="attendance-count-kicker">${escapeHtml(batch.Category_Name||batch.Category||'STUDENT BATCH')}</span><h3>${escapeHtml(batch.Batch_Code||batch.Batch_Name||'Batch')}</h3><p>${escapeHtml(classFromBatch_(batch))} <span>•</span> ${escapeHtml(batch.Campus_Name||batch.Campus||'Campus')} <span>•</span> <time datetime="${escapeAttr(normalizeDateKey_(state.date))}">${escapeHtml(formatDate(state.date))}</time></p></div><span class="badge ${disabled?'badge-yellow':x.status==='Completed'?'badge-green':x.status==='In Progress'?'badge-blue':'badge-yellow'}">${disabled?'Not required':escapeHtml(x.status)}</span></div>
     <div class="attendance-count-fields">${fields.map(([field,label,value])=>`<label class="attendance-count-field attendance-field-${field}"><span>${label}</span><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="${label} count for ${escapeAttr(batch.Batch_Code||'batch')}" data-field="${field}" value="${Number(value||0)}" ${disabled?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></label>`).join('')}
       <div class="attendance-count-field attendance-field-pending"><span>Not Marked</span><output class="batch-count-not-marked">${Number(x.Not_Marked||0).toLocaleString()}</output></div>
     </div>${disabled?'<div class="attendance-count-disabled-note">Attendance is not required for this batch on the selected date.</div>':''}
@@ -1787,40 +1787,16 @@ function openAttendanceCountModal_(request){
   if(!batches.length){showToast('No authorised batches are available for attendance entry.');return;}
   state.attendancePopup={mode:request.mode,batchIds:batches.map(b=>String(b.Batch_ID)),dateKey:request.dateKey};
   state.attendanceDirty=false;
-  const className=request.className||classFromBatch_(batches[0]);
-  const campusNames=[...new Set(batches.map(b=>String(b.Campus_Name||b.Campus||'').trim()).filter(Boolean))];
-  const categoryNames=[...new Set(batches.map(b=>String(b.Category_Name||b.Category||'').trim()).filter(Boolean))];
-  const title=request.mode==='class'?'Class-wise Attendance Entry':'Batch Attendance Entry';
-  const subtitle=request.mode==='class'
-    ? `${className} • ${batches.length} batch${batches.length===1?'':'es'}`
-    : `${batches[0].Batch_Code||batches[0].Batch_Name||'Selected Batch'} • ${className}`;
-  const totalEligible=batches.reduce((sum,b)=>sum+Number(batchAttendanceSummary(b).eligible||0),0);
   const html=`<div class="attendance-count-backdrop" id="attendanceCountModal" role="presentation" onclick="if(event.target===this)closeAttendanceCountModal_()">
-    <section class="attendance-count-dialog" role="dialog" aria-modal="true" aria-labelledby="attendanceCountDialogTitle" aria-describedby="attendanceCountDialogDescription" tabindex="-1">
-      <header class="attendance-count-dialog-head"><div class="attendance-count-heading"><span class="attendance-count-brand">AJMAL SUPER 40 <i>•</i> STUDENT OPERATIONS</span><h2 id="attendanceCountDialogTitle">${title}</h2><p id="attendanceCountDialogDescription">${escapeHtml(subtitle)}</p></div><button type="button" class="attendance-count-close" aria-label="Close attendance entry" onclick="closeAttendanceCountModal_()">×</button></header>
-      <div class="attendance-count-context"><div><span>CLASS</span><strong>${escapeHtml(className||'—')}</strong></div><div><span>CAMPUS</span><strong>${escapeHtml(campusNames.length===1?campusNames[0]:campusNames.length+' campuses')}</strong></div><div><span>CATEGORY</span><strong>${escapeHtml(categoryNames.length===1?categoryNames[0]:categoryNames.length+' categories')}</strong></div><div><span>ATTENDANCE DATE</span><strong>${escapeHtml(formatDate(state.date))}</strong></div><div><span>SELECTED BATCHES</span><strong>${batches.length}</strong></div></div>
-      <div class="attendance-count-summary" id="attendancePopupTotals"><div><span>Eligible</span><b data-total="eligible">${totalEligible.toLocaleString()}</b></div><div><span>Present</span><b class="is-present" data-total="present">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Present||0),0).toLocaleString()}</b></div><div><span>Absent</span><b class="is-absent" data-total="absent">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Absent||0),0).toLocaleString()}</b></div><div><span>Leave</span><b class="is-leave" data-total="leave">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Leave||0),0).toLocaleString()}</b></div><div><span>Sick</span><b class="is-sick" data-total="sick">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Sick||0),0).toLocaleString()}</b></div><div><span>Not Marked</span><b data-total="not-marked">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Not_Marked||0),0).toLocaleString()}</b></div></div>
-      <div class="attendance-count-instructions">Enter whole-number counts for each batch. <b>Not Marked</b> is calculated automatically as Eligible minus Present, Absent, Leave and Sick.</div>
-      <div class="attendance-count-list" id="batchAttendancePopupMatrix">${batches.map(attendancePopupCountCard_).join('')}</div>
-      <footer class="attendance-count-dialog-foot"><span class="attendance-count-validation-note">Present + Absent + Leave + Sick cannot exceed Eligible.</span><div><button type="button" class="btn btn-secondary" onclick="closeAttendanceCountModal_()">Cancel</button><button type="button" class="btn btn-primary" id="saveAttendancePopupButton" onclick="saveBatchAttendanceCounts()">Save Attendance</button></div></footer>
+    <section class="attendance-count-dialog" role="dialog" aria-modal="true" aria-label="Student batch attendance count entry" aria-describedby="attendanceCountValidationNote" tabindex="-1">
+      <button type="button" class="attendance-count-close" aria-label="Close attendance entry" title="Close" onclick="closeAttendanceCountModal_()">×</button>
+      <div class="attendance-count-list" id="batchAttendancePopupMatrix" role="group" aria-label="Batch-wise attendance counts for ${escapeAttr(formatDate(state.date))}">${batches.map(attendancePopupCountCard_).join('')}</div>
+      <footer class="attendance-count-dialog-foot"><span class="attendance-count-validation-note" id="attendanceCountValidationNote">Not Marked is calculated automatically. Present + Absent + Leave + Sick cannot exceed Eligible.</span><div><button type="button" class="btn btn-secondary" onclick="closeAttendanceCountModal_()">Cancel</button><button type="button" class="btn btn-primary" id="saveAttendancePopupButton" onclick="saveBatchAttendanceCounts()">Save Attendance</button></div></footer>
     </section>
   </div>`;
   document.body.insertAdjacentHTML('beforeend',html);
   document.body.classList.add('attendance-count-modal-open');
   document.getElementById('attendanceCountModal')?.querySelector('input:not([disabled])')?.focus({preventScroll:true});
-}
-
-function updateAttendancePopupTotals_(){
-  const root=document.getElementById('batchAttendancePopupMatrix');
-  const summary=document.getElementById('attendancePopupTotals');
-  if(!root||!summary)return;
-  const totals={eligible:0,present:0,absent:0,leave:0,sick:0,'not-marked':0};
-  root.querySelectorAll('.batch-count-row').forEach(row=>{
-    const get=field=>Number(row.querySelector(`[data-field="${field}"]`)?.value||0);
-    const eligible=get('eligible'),present=get('present'),absent=get('absent'),leave=get('leave'),sick=get('sick');
-    totals.eligible+=eligible;totals.present+=present;totals.absent+=absent;totals.leave+=leave;totals.sick+=sick;totals['not-marked']+=Math.max(0,eligible-present-absent-leave-sick);
-  });
-  Object.entries(totals).forEach(([key,value])=>{const el=summary.querySelector(`[data-total="${key}"]`);if(el)el.textContent=value.toLocaleString();});
 }
 
 function closeAttendanceCountModal_(skipConfirm=false){
@@ -1848,7 +1824,6 @@ function recalcBatchAttendanceRow_(input){
   if(balance) balance.textContent=marked<=eligible?String(eligible-marked):'Exceeds Eligible';
   row.style.outline=marked>eligible?'2px solid #dc2626':'';
   state.attendanceDirty=true;
-  updateAttendancePopupTotals_();
 }
 
 function saveBatchAttendanceCounts(){
