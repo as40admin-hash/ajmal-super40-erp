@@ -117,6 +117,8 @@ const state = {
   _preserveInputsUntil: 0,
   _attendanceLiveTimer: null,
   _attendanceLiveInFlight: false,
+  attendancePopup: null,
+  _attendancePopupRequest: null,
   _dashboardSnapshotSeq: 0,
   openAttendanceBatchId: '',
   attendanceDirty: false,
@@ -258,6 +260,8 @@ function go(page){
     if(!window.confirm('You have unsaved batch attendance counts. Discard these edits and continue?')) return;
     state.attendanceDirty=false;
   }
+  if(state.attendancePopup && page!==state.page) closeAttendanceCountModal_(true);
+  if(page!==state.page) state._attendancePopupRequest=null;
   if(page==='attendance'){state.openAttendanceBatchId='';if(state.page!=='attendance')state.attendanceDirty=false;}
   if(page==='settings'){state._settingsUsersRequested=false;}
   if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
@@ -342,6 +346,10 @@ function invalidateERPDataLoads(){
 }
 
 function activeEditorNeedsProtection_(){
+  // A count-entry dialog is an active attendance editing surface even when
+  // focus temporarily moves to its backdrop or action buttons. Do not replace
+  // its data with a background refresh while it is open.
+  if(state.attendancePopup) return true;
   const el=document.activeElement;
   if(!el) return false;
   const tag=String(el.tagName||'').toLowerCase();
@@ -966,6 +974,8 @@ function switchAttendanceMode(mode){
   const next=mode==='faculty'?'faculty':'student';
   if(next===state.attendanceMode) return;
   if(state.attendanceDirty && state.attendanceMode==='student' && !window.confirm('You have unsaved batch attendance counts. Discard these edits and switch attendance mode?')) return;
+  if(state.attendancePopup) closeAttendanceCountModal_(true);
+  state._attendancePopupRequest=null;
   state.attendanceMode=next;
   state.openAttendanceBatchId='';
   state.attendanceDirty=false;
@@ -975,6 +985,8 @@ function switchAttendanceMode(mode){
 }
 function changeAttendanceFilter_(key,value,kind){
   if(state.attendanceDirty && !window.confirm('You have unsaved batch attendance counts. Discard these edits and change the attendance filter?')){render();return;}
+  if(state.attendancePopup) closeAttendanceCountModal_(true);
+  state._attendancePopupRequest=null;
   state[key]=value;
   if(kind==='branch'){
     state.categoryFilter='All';state.classFilter='All';state.campusFilter='';state.batchFilter='';
@@ -987,6 +999,11 @@ function changeAttendanceFilter_(key,value,kind){
   }
   state.attendanceDirty=false;
   render();
+  // Selecting a concrete class opens one dialog containing every authorised
+  // student batch in that class/campus/category scope. Selecting a concrete
+  // batch opens the same dialog for that batch alone.
+  if(kind==='class' && state.classFilter && state.classFilter!=='All') requestAttendanceCountPopup_('class');
+  if(kind==='batch' && state.batchFilter) requestAttendanceCountPopup_('batch');
 }
 function facultyAllowed(){return ['Super Admin','Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(String(state.session.user?.Role||''));}
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return r==='Campus Admin' || (!isSuperAdmin() && !!String(state.session.user?.Campus_ID||state.session.user?.Campus_Name||'').trim() && r!=='Attendance Operator');}
@@ -1610,26 +1627,27 @@ function attendanceHTML(){
     const x=batchAttendanceSummary(b);
     const disabled=x.attendanceRequired===false;
     const badge=x.status==='Completed'?'badge-green':(x.status==='In Progress'?'badge-blue':'badge-yellow');
-    return `<tr class="batch-count-row" data-batch-id="${escapeAttr(b.Batch_ID)}" data-attendance-required="${disabled?'false':'true'}">
+    return `<tr class="batch-summary-row" data-batch-id="${escapeAttr(b.Batch_ID)}">
       <td>${escapeHtml(b.Category_Name||b.Category||'')}</td>
       <td>${escapeHtml(classFromBatch_(b))}</td>
       <td>${escapeHtml(b.Campus_Name||b.Campus||'')}</td>
       <td><b>${escapeHtml(b.Batch_Code||'')}</b></td>
-      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="eligible" value="${Number(x.eligible||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
-      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="present" value="${Number(x.Present||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
-      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="absent" value="${Number(x.Absent||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
-      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="leave" value="${Number(x.Leave||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
-      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="sick" value="${Number(x.Sick||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
-      <td><b class="batch-count-not-marked">${Number(x.Not_Marked||0)}</b></td>
+      <td>${Number(x.eligible||0).toLocaleString()}</td>
+      <td><span class="badge badge-green">${Number(x.Present||0).toLocaleString()}</span></td>
+      <td><span class="badge badge-red">${Number(x.Absent||0).toLocaleString()}</span></td>
+      <td><span class="badge badge-yellow">${Number(x.Leave||0).toLocaleString()}</span></td>
+      <td><span class="badge badge-purple">${Number(x.Sick||0).toLocaleString()}</span></td>
+      <td><b>${Number(x.Not_Marked||0).toLocaleString()}</b></td>
       <td><span class="badge ${badge}">${escapeHtml(x.status)}</span>${disabled?'<div class="small muted">Not required</div>':''}</td>
+      <td><button class="btn btn-secondary attendance-row-edit" onclick="openAttendanceBatchCountPopup_('${escapeAttr(b.Batch_ID)}')" ${disabled||matrixLoading?'disabled':''}>Edit counts</button></td>
     </tr>`;
   }).join('');
   return `${tabs}<div class="card attendance-filter-card"><div class="section-title" style="margin:0 0 12px"><div><h2 style="margin:0">Daily Attendance</h2><div class="muted">Enter one set of totals for each batch. Eligible strength can be adjusted for the selected day; individual UIN-wise marking is not required.</div></div><span class="badge badge-blue">${superAdmin?'Super Admin':operator?'Assigned Batches':campusRestrictedUser()?'Campus Restricted':'Branch Restricted'}</span></div><div class="toolbar attendance-filters">${filterMarkup}</div>
     ${isHoliday?`<div class="badge badge-yellow" style="margin-bottom:14px">Attendance not required on this date according to the calendar.</div>`:''}
     <div class="grid grid-6" style="margin-bottom:16px">${metricCard('Eligible',k.eligible,'Current filter','blue')}${metricCard('Present',k.Present,'Marked','green')}${metricCard('Absent',k.Absent,'Marked','red')}${metricCard('Leave',k.Leave,'Marked','yellow')}${metricCard('Sick',k.Sick,'Marked','blue')}${metricCard('Not Marked',Math.max(0,k.Not_Marked),'Pending','gray')}</div>
-    <div class="section-title" style="margin:0 0 10px"><div><h3 style="margin:0">Batch-wise Attendance Count Matrix</h3><div class="muted">Present + Absent + Leave + Sick must not exceed Eligible. Any balance remains Not Marked.</div></div><div class="toolbar"><button class="btn btn-secondary" onclick="loadBatchAttendanceMatrix(true)">↻ Refresh</button><button class="btn btn-primary" onclick="saveBatchAttendanceCounts()" ${matrixLoading?'disabled':''}>${matrixLoading?'Loading…':'Save Attendance Counts'}</button></div></div>
+    <div class="section-title" style="margin:0 0 10px"><div><h3 style="margin:0">Batch-wise Attendance Count Matrix</h3><div class="muted">Select a class or batch above to open the attendance-entry window. Saved totals are shown here.</div></div><div class="toolbar"><button class="btn btn-secondary" onclick="loadBatchAttendanceMatrix(true)">↻ Refresh</button><button class="btn btn-primary" onclick="openSelectedAttendanceCountPopup_()" ${matrixLoading?'disabled':''}>Open Count Entry</button></div></div>
     ${!matrixDateReady&&isGAS()?'<div class="alert">Loading date-specific eligible counts and saved batch totals…</div>':''}
-    <div class="table-wrap"><table class="data-table" id="batchAttendanceMatrix"><thead><tr><th>Category</th><th>Class</th><th>Campus</th><th>Batch</th><th>Eligible</th><th>Present</th><th>Absent</th><th>Leave</th><th>Sick</th><th>Not Marked</th><th>Status</th></tr></thead><tbody>${matrixRows||`<tr><td colspan="11" class="muted center">No matching campus/class/batch records.</td></tr>`}</tbody></table></div>
+    <div class="table-wrap"><table class="data-table" id="batchAttendanceMatrix"><thead><tr><th>Category</th><th>Class</th><th>Campus</th><th>Batch</th><th>Eligible</th><th>Present</th><th>Absent</th><th>Leave</th><th>Sick</th><th>Not Marked</th><th>Status</th><th>Action</th></tr></thead><tbody>${matrixRows||`<tr><td colspan="12" class="muted center">No matching campus/class/batch records.</td></tr>`}</tbody></table></div>
   </div>`;
 }
 
@@ -1637,6 +1655,8 @@ function changeAttendanceDate_(value){
   const next=normalizeDateKey_(value);
   if(!next||next===normalizeDateKey_(state.date)) return;
   if(state.attendanceDirty && !window.confirm('Discard unsaved attendance count edits and change the date?')){render();return;}
+  if(state.attendancePopup) closeAttendanceCountModal_(true);
+  state._attendancePopupRequest=null;
   state.date=next;
   state.attendanceDirty=false;
   state.batchAttendanceMatrixDate='';
@@ -1657,15 +1677,166 @@ function loadBatchAttendanceMatrix(force=false){
   const token=state.session.token;
   google.script.run.withSuccessHandler(res=>{
     state._batchAttendanceMatrixLoading=false;
-    if((state.page!=='attendance' && state.page!=='batches') || (state.page==='attendance' && state.attendanceMode!=='student') || normalizeDateKey_(state.date)!==dateKey || state.attendanceDirty) return;
+    const currentDateKey=normalizeDateKey_(state.date);
+    const attendanceViewActive=(state.page==='attendance'&&state.attendanceMode==='student')||state.page==='batches';
+    // A date can change while an earlier matrix request is still in flight.
+    // Do not apply stale rows; immediately fetch the currently selected date
+    // so a queued class/batch popup cannot remain waiting on the old request.
+    if(currentDateKey!==dateKey){
+      if(attendanceViewActive && !state.attendanceDirty && currentDateKey && state.batchAttendanceMatrixDate!==currentDateKey)
+        setTimeout(()=>loadBatchAttendanceMatrix(true),0);
+      return;
+    }
+    if(!attendanceViewActive || state.attendanceDirty) return;
     state.batchAttendanceMatrix=Array.isArray(res?.rows)?res.rows:[];
     state.batchAttendanceMatrixDate=dateKey;
     render();
+    const pending=state._attendancePopupRequest;
+    if(pending && pending.dateKey===dateKey && state.page==='attendance' && state.attendanceMode==='student'){
+      state._attendancePopupRequest=null;
+      setTimeout(()=>openAttendanceCountModal_(pending),0);
+    }
   }).withFailureHandler(err=>{
     state._batchAttendanceMatrixLoading=false;
+    const currentDateKey=normalizeDateKey_(state.date);
+    const attendanceViewActive=(state.page==='attendance'&&state.attendanceMode==='student')||state.page==='batches';
+    if(currentDateKey!==dateKey && attendanceViewActive && !state.attendanceDirty && currentDateKey && state.batchAttendanceMatrixDate!==currentDateKey){
+      setTimeout(()=>loadBatchAttendanceMatrix(true),0);
+      return;
+    }
+    if(state._attendancePopupRequest?.dateKey===dateKey) state._attendancePopupRequest=null;
     if(state.batchAttendanceMatrixDate!==dateKey) showToast('Could not load batch attendance counts: '+(err.message||err));
   }).getBatchAttendanceMatrix(token,dateKey);
 }
+
+function attendancePopupBatches_(mode,batchIds){
+  const ids=new Set((batchIds||[]).map(String));
+  const visibleIds=new Set(scopedBatchesForAttendance().map(b=>String(b.Batch_ID||'')));
+  return (state.data.batches||[])
+    .filter(b=>studentAttendanceBatch_(b) && String(b.Active_Flag??'TRUE').toUpperCase()!=='FALSE' && ids.has(String(b.Batch_ID||'')) && visibleIds.has(String(b.Batch_ID||'')))
+    .sort((a,b)=>String(a.Campus_Name||a.Campus||'').localeCompare(String(b.Campus_Name||b.Campus||''),undefined,{numeric:true,sensitivity:'base'}) || String(a.Batch_Code||'').localeCompare(String(b.Batch_Code||''),undefined,{numeric:true,sensitivity:'base'}));
+}
+
+function requestAttendanceCountPopup_(mode){
+  if(state.page!=='attendance' || state.attendanceMode!=='student') return;
+  let batches=scopedBatchesForAttendance();
+  if(mode==='class') batches=batches.filter(b=>classFromBatch_(b)===String(state.classFilter||''));
+  if(mode==='batch') batches=batches.filter(b=>String(b.Batch_Code||'')===String(state.batchFilter||''));
+  const batchIds=batches.map(b=>String(b.Batch_ID||'')).filter(Boolean);
+  if(!batchIds.length){showToast('No authorised student batches are available for this selection.');return;}
+  const request={mode:mode==='batch'?'batch':'class',batchIds,dateKey:normalizeDateKey_(state.date),className:String(state.classFilter||''),batchCode:mode==='batch'?String(state.batchFilter||''):''};
+  state._attendancePopupRequest=request;
+  if(!isGAS() || state.batchAttendanceMatrixDate===request.dateKey){
+    state._attendancePopupRequest=null;
+    openAttendanceCountModal_(request);
+    return;
+  }
+  showToast('Loading saved attendance counts…');
+  if(!state._batchAttendanceMatrixLoading) loadBatchAttendanceMatrix(true);
+}
+
+function openSelectedAttendanceCountPopup_(){
+  if(state.batchFilter){requestAttendanceCountPopup_('batch');return;}
+  if(state.classFilter && state.classFilter!=='All'){requestAttendanceCountPopup_('class');return;}
+  showToast('Select a class or a batch first to open attendance entry.');
+}
+
+function openAttendanceBatchCountPopup_(batchId){
+  const batch=(state.data.batches||[]).find(b=>String(b.Batch_ID||'')===String(batchId||''));
+  const visible=scopedBatchesForAttendance().some(b=>String(b.Batch_ID||'')===String(batchId||''));
+  if(!batch || !visible || !studentAttendanceBatch_(batch)){showToast('Student batch is not available in your authorised attendance scope.');return;}
+  const request={mode:'batch',batchIds:[String(batch.Batch_ID)],dateKey:normalizeDateKey_(state.date),className:classFromBatch_(batch),batchCode:String(batch.Batch_Code||'')};
+  state._attendancePopupRequest=request;
+  if(!isGAS() || state.batchAttendanceMatrixDate===request.dateKey){
+    state._attendancePopupRequest=null;
+    openAttendanceCountModal_(request);
+  }else{
+    showToast('Loading saved attendance counts…');
+    if(!state._batchAttendanceMatrixLoading) loadBatchAttendanceMatrix(true);
+  }
+}
+
+function attendancePopupCountCard_(batch){
+  const x=batchAttendanceSummary(batch,state.date);
+  const disabled=x.attendanceRequired===false;
+  const fields=[
+    ['eligible','Eligible',x.eligible],
+    ['present','Present',x.Present],
+    ['absent','Absent',x.Absent],
+    ['leave','Leave',x.Leave],
+    ['sick','Sick',x.Sick]
+  ];
+  return `<section class="batch-count-row attendance-count-card" data-batch-id="${escapeAttr(batch.Batch_ID)}" data-attendance-required="${disabled?'false':'true'}">
+    <div class="attendance-count-card-head"><div class="attendance-count-identity"><span class="attendance-count-kicker">${escapeHtml(batch.Category_Name||batch.Category||'STUDENT BATCH')}</span><h3>${escapeHtml(batch.Batch_Code||batch.Batch_Name||'Batch')}</h3><p>${escapeHtml(classFromBatch_(batch))} <span>•</span> ${escapeHtml(batch.Campus_Name||batch.Campus||'Campus')}</p></div><span class="badge ${disabled?'badge-yellow':x.status==='Completed'?'badge-green':x.status==='In Progress'?'badge-blue':'badge-yellow'}">${disabled?'Not required':escapeHtml(x.status)}</span></div>
+    <div class="attendance-count-fields">${fields.map(([field,label,value])=>`<label class="attendance-count-field attendance-field-${field}"><span>${label}</span><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" aria-label="${label} count for ${escapeAttr(batch.Batch_Code||'batch')}" data-field="${field}" value="${Number(value||0)}" ${disabled?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></label>`).join('')}
+      <div class="attendance-count-field attendance-field-pending"><span>Not Marked</span><output class="batch-count-not-marked">${Number(x.Not_Marked||0).toLocaleString()}</output></div>
+    </div>${disabled?'<div class="attendance-count-disabled-note">Attendance is not required for this batch on the selected date.</div>':''}
+  </section>`;
+}
+
+function openAttendanceCountModal_(request){
+  if(!request || state.page!=='attendance' || state.attendanceMode!=='student') return;
+  if(normalizeDateKey_(state.date)!==request.dateKey) return;
+  if(isGAS() && state.batchAttendanceMatrixDate!==request.dateKey){
+    state._attendancePopupRequest=request;
+    if(!state._batchAttendanceMatrixLoading) loadBatchAttendanceMatrix(true);
+    return;
+  }
+  if(state.attendancePopup) closeAttendanceCountModal_(true);
+  const batches=attendancePopupBatches_(request.mode,request.batchIds);
+  if(!batches.length){showToast('No authorised batches are available for attendance entry.');return;}
+  state.attendancePopup={mode:request.mode,batchIds:batches.map(b=>String(b.Batch_ID)),dateKey:request.dateKey};
+  state.attendanceDirty=false;
+  const className=request.className||classFromBatch_(batches[0]);
+  const campusNames=[...new Set(batches.map(b=>String(b.Campus_Name||b.Campus||'').trim()).filter(Boolean))];
+  const categoryNames=[...new Set(batches.map(b=>String(b.Category_Name||b.Category||'').trim()).filter(Boolean))];
+  const title=request.mode==='class'?'Class-wise Attendance Entry':'Batch Attendance Entry';
+  const subtitle=request.mode==='class'
+    ? `${className} • ${batches.length} batch${batches.length===1?'':'es'}`
+    : `${batches[0].Batch_Code||batches[0].Batch_Name||'Selected Batch'} • ${className}`;
+  const totalEligible=batches.reduce((sum,b)=>sum+Number(batchAttendanceSummary(b).eligible||0),0);
+  const html=`<div class="attendance-count-backdrop" id="attendanceCountModal" role="presentation" onclick="if(event.target===this)closeAttendanceCountModal_()">
+    <section class="attendance-count-dialog" role="dialog" aria-modal="true" aria-labelledby="attendanceCountDialogTitle" aria-describedby="attendanceCountDialogDescription" tabindex="-1">
+      <header class="attendance-count-dialog-head"><div class="attendance-count-heading"><span class="attendance-count-brand">AJMAL SUPER 40 <i>•</i> STUDENT OPERATIONS</span><h2 id="attendanceCountDialogTitle">${title}</h2><p id="attendanceCountDialogDescription">${escapeHtml(subtitle)}</p></div><button type="button" class="attendance-count-close" aria-label="Close attendance entry" onclick="closeAttendanceCountModal_()">×</button></header>
+      <div class="attendance-count-context"><div><span>CLASS</span><strong>${escapeHtml(className||'—')}</strong></div><div><span>CAMPUS</span><strong>${escapeHtml(campusNames.length===1?campusNames[0]:campusNames.length+' campuses')}</strong></div><div><span>CATEGORY</span><strong>${escapeHtml(categoryNames.length===1?categoryNames[0]:categoryNames.length+' categories')}</strong></div><div><span>ATTENDANCE DATE</span><strong>${escapeHtml(formatDate(state.date))}</strong></div><div><span>SELECTED BATCHES</span><strong>${batches.length}</strong></div></div>
+      <div class="attendance-count-summary" id="attendancePopupTotals"><div><span>Eligible</span><b data-total="eligible">${totalEligible.toLocaleString()}</b></div><div><span>Present</span><b class="is-present" data-total="present">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Present||0),0).toLocaleString()}</b></div><div><span>Absent</span><b class="is-absent" data-total="absent">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Absent||0),0).toLocaleString()}</b></div><div><span>Leave</span><b class="is-leave" data-total="leave">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Leave||0),0).toLocaleString()}</b></div><div><span>Sick</span><b class="is-sick" data-total="sick">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Sick||0),0).toLocaleString()}</b></div><div><span>Not Marked</span><b data-total="not-marked">${batches.reduce((n,b)=>n+Number(batchAttendanceSummary(b).Not_Marked||0),0).toLocaleString()}</b></div></div>
+      <div class="attendance-count-instructions">Enter whole-number counts for each batch. <b>Not Marked</b> is calculated automatically as Eligible minus Present, Absent, Leave and Sick.</div>
+      <div class="attendance-count-list" id="batchAttendancePopupMatrix">${batches.map(attendancePopupCountCard_).join('')}</div>
+      <footer class="attendance-count-dialog-foot"><span class="attendance-count-validation-note">Present + Absent + Leave + Sick cannot exceed Eligible.</span><div><button type="button" class="btn btn-secondary" onclick="closeAttendanceCountModal_()">Cancel</button><button type="button" class="btn btn-primary" id="saveAttendancePopupButton" onclick="saveBatchAttendanceCounts()">Save Attendance</button></div></footer>
+    </section>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  document.body.classList.add('attendance-count-modal-open');
+  document.getElementById('attendanceCountModal')?.querySelector('input:not([disabled])')?.focus({preventScroll:true});
+}
+
+function updateAttendancePopupTotals_(){
+  const root=document.getElementById('batchAttendancePopupMatrix');
+  const summary=document.getElementById('attendancePopupTotals');
+  if(!root||!summary)return;
+  const totals={eligible:0,present:0,absent:0,leave:0,sick:0,'not-marked':0};
+  root.querySelectorAll('.batch-count-row').forEach(row=>{
+    const get=field=>Number(row.querySelector(`[data-field="${field}"]`)?.value||0);
+    const eligible=get('eligible'),present=get('present'),absent=get('absent'),leave=get('leave'),sick=get('sick');
+    totals.eligible+=eligible;totals.present+=present;totals.absent+=absent;totals.leave+=leave;totals.sick+=sick;totals['not-marked']+=Math.max(0,eligible-present-absent-leave-sick);
+  });
+  Object.entries(totals).forEach(([key,value])=>{const el=summary.querySelector(`[data-total="${key}"]`);if(el)el.textContent=value.toLocaleString();});
+}
+
+function closeAttendanceCountModal_(skipConfirm=false){
+  if(state.attendanceDirty && !skipConfirm && !window.confirm('Discard unsaved attendance count edits?'))return false;
+  const modal=document.getElementById('attendanceCountModal');
+  if(modal)modal.remove();
+  document.body.classList.remove('attendance-count-modal-open');
+  state.attendancePopup=null;
+  state._attendancePopupRequest=null;
+  if(state.attendanceDirty)state.attendanceDirty=false;
+  return true;
+}
+
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape' && state.attendancePopup) closeAttendanceCountModal_();
+});
 
 function recalcBatchAttendanceRow_(input){
   const row=input?.closest('.batch-count-row');
@@ -1677,13 +1848,14 @@ function recalcBatchAttendanceRow_(input){
   if(balance) balance.textContent=marked<=eligible?String(eligible-marked):'Exceeds Eligible';
   row.style.outline=marked>eligible?'2px solid #dc2626':'';
   state.attendanceDirty=true;
+  updateAttendancePopupTotals_();
 }
 
 function saveBatchAttendanceCounts(){
   if(isGAS() && state.batchAttendanceMatrixDate!==normalizeDateKey_(state.date)){showToast('Attendance counts are still loading. Please wait before saving.');return;}
-  const table=document.getElementById('batchAttendanceMatrix');
+  const table=document.getElementById('batchAttendancePopupMatrix')||document.getElementById('batchAttendanceMatrix');
   if(!table){showToast('Attendance matrix is not available.');return;}
-  const trs=[...table.querySelectorAll('tbody .batch-count-row')].filter(tr=>tr.dataset.attendanceRequired!=='false');
+  const trs=[...table.querySelectorAll('.batch-count-row')].filter(tr=>tr.dataset.attendanceRequired!=='false');
   if(!trs.length){showToast('No eligible batch rows are available to save.');return;}
   const rows=[];
   for(const tr of trs){
@@ -1705,6 +1877,7 @@ function saveBatchAttendanceCounts(){
     google.script.run.withSuccessHandler(res=>{
       state.attendanceDirty=false;
       state.batchAttendanceMatrixDate='';
+      closeAttendanceCountModal_(true);
       const applied=applyAuthoritativeMutationResponse_(res,'attendance',true);
       if(!applied) syncERPData({targetPage:'attendance',silent:true,force:true,preserveInputs:false});
       refreshDashboardSnapshot(true);
@@ -1724,6 +1897,7 @@ function saveBatchAttendanceCounts(){
     state.data.batchAttendanceSummaries=saved;
     state.batchAttendanceMatrixDate='';
     state.attendanceDirty=false;
+    closeAttendanceCountModal_(true);
     state.data.dashboardSnapshot=null;
     showToast(`${rows.length} batch attendance count record(s) saved locally.`);
     render();
