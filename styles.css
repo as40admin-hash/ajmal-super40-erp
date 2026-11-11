@@ -1043,3 +1043,71 @@ body.attendance-count-modal-open{overflow:hidden}
 @media(max-width:900px){.attendance-count-backdrop{padding:12px}.attendance-count-dialog{max-height:calc(100dvh - 24px);border-radius:19px}.attendance-count-context{grid-template-columns:repeat(3,minmax(0,1fr));padding:11px 14px}.attendance-count-summary{grid-template-columns:repeat(3,minmax(0,1fr));padding:12px 14px 7px}.attendance-count-list{padding:0 14px 14px;gap:10px}.attendance-count-dialog-head{padding:18px 18px 16px}}
 @media(max-width:640px){.attendance-count-backdrop{align-items:flex-end;padding:0}.attendance-count-dialog{width:100%;max-height:96dvh;border-radius:22px 22px 0 0;border-bottom:0}.attendance-count-dialog-head{padding:16px 15px 14px}.attendance-count-heading h2{font-size:19px}.attendance-count-heading p{font-size:11px}.attendance-count-context{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:10px 12px}.attendance-count-context>div{padding:5px 8px}.attendance-count-summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:10px 12px 7px}.attendance-count-summary>div{padding:8px 9px}.attendance-count-summary b{font-size:17px}.attendance-count-instructions{margin:3px 12px 10px;padding:9px 10px;font-size:10px}.attendance-count-list{grid-template-columns:1fr;gap:9px;padding:0 12px 12px}.attendance-count-card{padding:12px;border-radius:14px}.attendance-count-fields{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.attendance-count-field .input,.attendance-field-pending output{min-height:48px;font-size:18px}.attendance-count-dialog-foot{align-items:stretch;flex-direction:column;padding:11px 12px calc(12px + env(safe-area-inset-bottom))}.attendance-count-dialog-foot>div{width:100%}.attendance-count-dialog-foot>div .btn{flex:1;min-height:44px}.attendance-count-validation-note{font-size:9px}.attendance-row-edit{font-size:10px;padding:7px 8px}}
 @media(prefers-reduced-motion:reduce){.attendance-count-backdrop{backdrop-filter:none;-webkit-backdrop-filter:none}}
+
+/* 2026-11-11 refinement: compact the fixed attendance popup banner. */
+.attendance-count-dialog-head{
+  align-items:center;
+  gap:12px;
+  min-height:48px;
+  padding:7px 16px;
+}
+.attendance-count-heading{
+  display:grid;
+  grid-template-columns:max-content max-content minmax(0,1fr);
+  align-items:center;
+  gap:12px;
+  flex:1 1 auto;
+  min-width:0;
+}
+.attendance-count-brand{
+  margin:0;
+  font-size:8px;
+  letter-spacing:1px;
+  line-height:1.15;
+  white-space:nowrap;
+}
+.attendance-count-heading h2{
+  min-width:0;
+  font-size:15px;
+  line-height:1.2;
+  white-space:nowrap;
+}
+.attendance-count-heading p{
+  min-width:0;
+  margin:0;
+  overflow:hidden;
+  font-size:11px;
+  line-height:1.2;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.attendance-count-close{
+  flex-basis:32px;
+  width:32px;
+  height:32px;
+  border-radius:9px;
+  font-size:22px;
+}
+
+@media(max-width:900px){
+  .attendance-count-dialog-head{min-height:44px;padding:6px 12px;gap:9px}
+  .attendance-count-heading{gap:9px;grid-template-columns:max-content max-content minmax(0,1fr)}
+  .attendance-count-brand{font-size:7.5px;letter-spacing:.75px}
+  .attendance-count-heading h2{font-size:14px}
+  .attendance-count-heading p{font-size:10px}
+  .attendance-count-close{flex-basis:30px;width:30px;height:30px}
+}
+
+@media(max-width:640px){
+  .attendance-count-dialog-head{min-height:0;padding:7px 12px;gap:8px}
+  .attendance-count-heading{
+    grid-template-columns:max-content minmax(0,1fr);
+    grid-template-areas:"title title" "brand subtitle";
+    align-items:center;
+    gap:2px 8px;
+  }
+  .attendance-count-brand{grid-area:brand;font-size:7px;letter-spacing:.55px}
+  .attendance-count-heading h2{grid-area:title;font-size:13px;line-height:1.15}
+  .attendance-count-heading p{grid-area:subtitle;font-size:9px}
+  .attendance-count-close{flex-basis:29px;width:29px;height:29px;font-size:20px}
+}
