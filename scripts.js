@@ -77,7 +77,7 @@
 
 const state = {
   page: 'dashboard',
-  data: { branches: [], batches: [], campuses: [], calendar: [], attendance: [], students: [], allocations: [], movements: [], residentialAllocations: [], settings: [], dashboardSnapshot: null },
+  data: { branches: [], batches: [], campuses: [], calendar: [], attendance: [], batchAttendanceSummaries: [], students: [], allocations: [], movements: [], residentialAllocations: [], settings: [], dashboardSnapshot: null },
   managementSnapshot: null,
   managementSnapshotDate: new Date().toISOString().slice(0,10),
   managementSnapshotBranch: 'ALL',
@@ -100,6 +100,9 @@ const state = {
   resultOptions: {categories:[],classes:[],exams:[],batches:[]},
   adminUsers: [],
   attendanceMode: 'student',
+  batchAttendanceMatrix: [],
+  batchAttendanceMatrixDate: '',
+  _batchAttendanceMatrixLoading: false,
   facultyAttendance: [],
   facultyOptions: { subjects: [], faculties: [], assignments: [] },
   facultyCategoryFilter: '',
@@ -131,6 +134,8 @@ function applyAuthoritativeSnapshot_(data) {
   // authoritative spreadsheet/bootstrap state, but force the dashboard
   // snapshot to be fetched again.
   state.data = Object.assign({}, data, {dashboardSnapshot: null});
+  state.batchAttendanceMatrix = [];
+  state.batchAttendanceMatrixDate = '';
   state._lastServerSyncAt = Date.now();
   state._serverSyncInFlight = false;
   state.facultyOptions = {
@@ -178,6 +183,7 @@ document.addEventListener('visibilitychange', () => {
   if (!isGAS() || !state.session.token) return;
   if (state.page === 'dashboard') refreshDashboardSnapshot(true);
   if (state.page === 'attendance') syncERPData({silent:true, force:true, preserveInputs:true});
+  if (state.page === 'batches') loadBatchAttendanceMatrix(true);
   if (state.page === 'attendanceSnapshot') loadAttendanceManagementSnapshot(true);
 });
 
@@ -248,7 +254,11 @@ function renderNav(){
 function go(page){
   if(!roleAllowedPage(page)){showToast('This module is not available for your assigned role.');return;}
   if(page==='uinimport' && !requireImportAccess()) return;
-  if(page==='attendance'){state.openAttendanceBatchId='';state.attendanceDirty=false;}
+  if(state.attendanceDirty && (state.page==='attendance'||state.page==='batches')){
+    if(!window.confirm('You have unsaved batch attendance counts. Discard these edits and continue?')) return;
+    state.attendanceDirty=false;
+  }
+  if(page==='attendance'){state.openAttendanceBatchId='';if(state.page!=='attendance')state.attendanceDirty=false;}
   if(page==='settings'){state._settingsUsersRequested=false;}
   if(page==='faculty'){state._facultySettingsLoaded=false;state._facultySettingsLoading=false;}
   if(page==='dashboard'){
@@ -317,14 +327,14 @@ function refreshDashboardSnapshot(renderAfter=true){
 }
 function startDashboardLiveRefresh(){
   if(state._dashboardSyncTimer) return;
-  // Cross-user attendance changes are reflected without waiting for the
-  // previous 2-minute refresh window. Post-save updates are still immediate.
+  // Refresh every 15 seconds to reduce repeated dashboard API traffic.
+  // Successful saves still refresh the dashboard immediately.
   state._dashboardSyncTimer=setInterval(()=>{
     if(!document.hidden && state.page==='dashboard' && isGAS() && state.session.token && !activeEditorNeedsProtection_()){
       refreshDashboardSnapshot(true);
       refreshDashboardFacultyAttendance_(true);
     }
-  },5000);
+  },15000);
 }
 function invalidateERPDataLoads(){
   state._dataLoadSeq = Number(state._dataLoadSeq || 0) + 1;
@@ -491,12 +501,17 @@ function startERPAutoSync(){
 }
 function startAttendanceLiveRefresh(){
   if(state._attendanceLiveTimer) return;
-  // Attendance pages use a short polling window so changes made by another
-  // authorised user appear without a manual page refresh. Active edits are
-  // protected so a remote update never destroys unsaved selections.
+  // Attendance panels refresh periodically so other authorised users'
+  // updates appear without manual reload. Active edits are protected.
   state._attendanceLiveTimer=setInterval(()=>{
-    if(document.hidden || state.page!=='attendance' || !isGAS() || !state.session.token) return;
+    if(document.hidden || (state.page!=='attendance' && state.page!=='batches') || !isGAS() || !state.session.token) return;
     if(state._attendanceLiveInFlight || state._serverSyncInFlight || activeEditorNeedsProtection_()) return;
+
+    if(state.page==='batches'){
+      if(state.attendanceDirty) return;
+      loadBatchAttendanceMatrix(true);
+      return;
+    }
 
     if(state.attendanceMode==='faculty'){
       if(state.facultyAttendanceDirty) return;
@@ -515,28 +530,9 @@ function startAttendanceLiveRefresh(){
       return;
     }
 
-    const openBatchId=String(state.openAttendanceBatchId||'').trim();
-    if(openBatchId){
-      if(state.attendanceDirty) return;
-      const b=(state.data.batches||[]).find(x=>String(x.Batch_ID)===openBatchId);
-      if(!b) return;
-      state._attendanceLiveInFlight=true;
-      const token=state.session.token;
-      const dateKey=state.date;
-      google.script.run
-        .withSuccessHandler(res=>{
-          state._attendanceLiveInFlight=false;
-          if(state.page!=='attendance' || state.attendanceMode!=='student') return;
-          if(String(state.openAttendanceBatchId||'')!==openBatchId || state.date!==dateKey) return;
-          if(res?.attendanceRequired) renderAttendanceRoster(b,res.rows||[],'Live roster refreshed from the authoritative attendance record.');
-        })
-        .withFailureHandler(()=>{state._attendanceLiveInFlight=false;})
-        .getAttendanceRoster(token,openBatchId,dateKey);
-      return;
-    }
-
-    syncERPData({silent:true,preserveInputs:true,force:true});
-  },5000);
+    if(state.attendanceDirty) return;
+    loadBatchAttendanceMatrix(true);
+  },15000);
 }
 
 function render(){
@@ -551,12 +547,20 @@ function render(){
     if(!Array.isArray(state.dashboardFacultyAttendance)) setTimeout(()=>refreshDashboardFacultyAttendance_(true),0);
     startDashboardLiveRefresh();
   }
-  else if(state.page==='attendance') c.innerHTML=state.attendanceMode==='faculty'?facultyAttendanceHTML():attendanceHTML();
+  else if(state.page==='attendance') {
+    c.innerHTML=state.attendanceMode==='faculty'?facultyAttendanceHTML():attendanceHTML();
+    if(state.attendanceMode==='student' && isGAS() && state.session.token && state.batchAttendanceMatrixDate!==normalizeDateKey_(state.date) && !state._batchAttendanceMatrixLoading)
+      setTimeout(()=>loadBatchAttendanceMatrix(false),0);
+  }
   else if(state.page==='attendanceSnapshot') { c.innerHTML=managementAttendanceSnapshotHTML(); setTimeout(()=>loadAttendanceManagementSnapshot(),0); }
   else if(state.page==='students' || state.page==='uinimport') c.innerHTML=studentsHTML();
   else if(state.page==='movements') c.innerHTML=movementsHTML();
   else if(state.page==='calendar') c.innerHTML=calendarHTML();
-  else if(state.page==='batches') c.innerHTML=batchesHTML();
+  else if(state.page==='batches') {
+    c.innerHTML=batchesHTML();
+    if(isGAS() && state.session.token && state.batchAttendanceMatrixDate!==normalizeDateKey_(state.date) && !state._batchAttendanceMatrixLoading)
+      setTimeout(()=>loadBatchAttendanceMatrix(false),0);
+  }
   else if(state.page==='reports') c.innerHTML=reportsHTML();
   else if(state.page==='results') { c.innerHTML=resultsHTML(); setTimeout(loadResultOptions,0); }
   else if(state.page==='faculty') { c.innerHTML=`<div id="facultyAdminSection">${facultyAdminHtml()}</div>`; if(canManageFacultyMaster() && !state._facultySettingsLoaded && !state._facultySettingsLoading){ state._facultySettingsLoading=true; setTimeout(()=>loadFacultyAdminData(),120); } }
@@ -635,60 +639,34 @@ function attendanceEligibleUinsForBatch_(batchId, batchCode=''){
 }
 
 function attendanceCounts(){
-  // IMPORTANT:
-  // Daily Attendance is a filter-scoped view. dashboardSnapshot is an
-  // organisation-wide snapshot and must NOT be used for these cards.
-  const batches=scopedBatchesForAttendance();
-  const date=normalizeDateKey_(state.date);
-  const counts={Present:0,Absent:0,Leave:0,Sick:0,Not_Marked:0};
-  let eligible=0;
-
-  const attendanceRows=(state.data.attendance||[])
-    .filter(a=>normalizeDateKey_(a.Attendance_Date||'')===date);
-
-  batches.forEach(b=>{
-    const batchId=String(b.Batch_ID||'').trim();
-    const batchCode=String(b.Batch_Code||'').trim().toUpperCase();
-    const eligibleUins=attendanceEligibleUinsForBatch_(batchId,batchCode);
-    const batchEligible=eligibleUins.size || Number(b.Expected_Strength||b.batch_total||0);
-    eligible+=batchEligible;
-
-    const latestByUin={};
-
-    attendanceRows.forEach(r=>{
-      const u=String(r.UIN||'').trim().toUpperCase();
-      if(!u) return;
-
-      const rowBatchId=String(r.Batch_ID||'').trim();
-      const rowBatchCode=String(r.Batch_Code||'').trim().toUpperCase();
-      const sameBatch=
-        rowBatchId===batchId ||
-        (!rowBatchId && batchCode && rowBatchCode===batchCode);
-
-      if(!sameBatch) return;
-      if(eligibleUins.size && !eligibleUins.has(u)) return;
-
-      const stamp=Date.parse(String(r.Updated_At||r.Marked_At||'')) || 0;
-      const previous=latestByUin[u];
-      if(!previous || stamp>=previous.__stamp){
-        latestByUin[u]={
-          status:String(r.Attendance_Status||'').trim(),
-          __stamp:stamp
-        };
-      }
-    });
-
-    Object.values(latestByUin).forEach(r=>{
-      if(r.status==='Present') counts.Present++;
-      else if(r.status==='Absent') counts.Absent++;
-      else if(r.status==='Leave') counts.Leave++;
-      else if(r.status==='Sick') counts.Sick++;
-    });
+  // The daily attendance interface is batch-scoped. When a batch-level count
+  // record exists for the selected date it is authoritative; legacy per-UIN
+  // attendance remains supported for batches not yet migrated to count entry.
+  const totals={eligible:0,Present:0,Absent:0,Leave:0,Sick:0,Not_Marked:0};
+  scopedBatchesForAttendance().forEach(b=>{
+    const x=batchAttendanceSummary(b);
+    totals.eligible+=Number(x.eligible||0);
+    totals.Present+=Number(x.Present||0);
+    totals.Absent+=Number(x.Absent||0);
+    totals.Leave+=Number(x.Leave||0);
+    totals.Sick+=Number(x.Sick||0);
+    totals.Not_Marked+=Number(x.Not_Marked||0);
   });
+  return totals;
+}
 
-  const marked=counts.Present+counts.Absent+counts.Leave+counts.Sick;
-  counts.Not_Marked=Math.max(0,eligible-marked);
-  return {eligible,...counts};
+function dashboardAttendanceCounts(){
+  const snap=state.data.dashboardSnapshot;
+  if(!snap || normalizeDateKey_(snap.date||'')!==normalizeDateKey_(state.date) || !Array.isArray(snap.rows)) return attendanceCounts();
+  const totals={eligible:Number(snap.totalEligible||0),Present:0,Absent:0,Leave:0,Sick:0,Not_Marked:0};
+  snap.rows.forEach(r=>{
+    totals.Present+=Number(r.present||0);
+    totals.Absent+=Number(r.absent||0);
+    totals.Leave+=Number(r.leave||0);
+    totals.Sick+=Number(r.sick||0);
+    totals.Not_Marked+=Number(r.notMarked||0);
+  });
+  return totals;
 }
 
 function dashboardFacultyAttendanceHTML(){
@@ -736,7 +714,7 @@ function dashboardFacultyAttendanceHTML(){
 
 
 function dashboardHTML(){
-  const s=stats(), cats=categoryTotals(), a=attendanceCounts();
+  const s=stats(), cats=categoryTotals(), a=dashboardAttendanceCounts();
   const branchRows=(state.data.branches||[]).filter(br=>String(br.Active_Flag??'TRUE').toUpperCase()!=='FALSE');
   const scopedStudents=state.data.students||[];
   const quickResultRoles=['Admin','Result Operator'];
@@ -773,14 +751,14 @@ function dashboardHTML(){
       <div id="globalSearchResults" class="global-search-results hidden"></div>
     </div>
     <div class="quick-actions-grid">
-      <button class="quick-action quick-blue" onclick="go('attendance')"><span>✓</span><div><b>Daily Attendance</b><small>Mark today's roster</small></div><i>→</i></button>
+      <button class="quick-action quick-blue" onclick="go('attendance')"><span>✓</span><div><b>Daily Attendance</b><small>Enter batch-wise totals</small></div><i>→</i></button>
       <button class="quick-action quick-gold" onclick="go('students')"><span>◉</span><div><b>Student Master</b><small>Search & review UINs</small></div><i>→</i></button>
       <button class="quick-action quick-purple" onclick="go('movements')"><span>↔</span><div><b>Movement Control</b><small>Transfers & approvals</small></div><i>→</i></button>
       <button class="quick-action quick-green" onclick="go('results')"><span>📊</span><div><b>Result Centre</b><small>Search & analyse results</small></div><i>→</i></button>
       ${quickResultRoles.includes(String(state.session.user?.Role||''))?`<button class="quick-action quick-red" onclick="requireResultUploadAccess()"><span>⇧</span><div><b>Upload Result</b><small>Admin / Result Operator</small></div><i>→</i></button>`:''}
       ${String(state.session.user?.Role||'')==='Admin'?`<button class="quick-action quick-slate" onclick="go('settings')"><span>⚙</span><div><b>Admin Settings</b><small>Users, access & defaults</small></div><i>→</i></button>`:''}
     </div>
-    <div class="dashboard-section-head"><div><span class="section-kicker kicker-blue">TODAY</span><h2>Live Attendance</h2><p>One attendance status per eligible student per working day.</p></div><button class="text-link" onclick="go('attendance')">Open attendance →</button></div>
+    <div class="dashboard-section-head"><div><span class="section-kicker kicker-blue">TODAY</span><h2>Live Attendance</h2><p>Record eligible, present, absent, leave and sick totals for each batch without individual UIN marking.</p></div><button class="text-link" onclick="go('attendance')">Open attendance →</button></div>
     <div class="grid grid-6 attendance-kpi-grid">
       ${metricCard('Eligible Today',a.eligible,'Dynamic roster','blue')}
       ${metricCard('Present',a.Present,'Marked present','green')}
@@ -985,12 +963,30 @@ function syncAttendanceFilters(){
 }
 
 function switchAttendanceMode(mode){
-  state.attendanceMode=mode==='faculty'?'faculty':'student';
+  const next=mode==='faculty'?'faculty':'student';
+  if(next===state.attendanceMode) return;
+  if(state.attendanceDirty && state.attendanceMode==='student' && !window.confirm('You have unsaved batch attendance counts. Discard these edits and switch attendance mode?')) return;
+  state.attendanceMode=next;
   state.openAttendanceBatchId='';
   state.attendanceDirty=false;
   state.facultyAttendanceDirty=false;
   render();
   if(state.attendanceMode==='faculty')setTimeout(loadFacultyAttendanceOptions,0);
+}
+function changeAttendanceFilter_(key,value,kind){
+  if(state.attendanceDirty && !window.confirm('You have unsaved batch attendance counts. Discard these edits and change the attendance filter?')){render();return;}
+  state[key]=value;
+  if(kind==='branch'){
+    state.categoryFilter='All';state.classFilter='All';state.campusFilter='';state.batchFilter='';
+  }else if(kind==='campus'){
+    state.classFilter='All';state.batchFilter='';
+  }else if(kind==='category'){
+    state.classFilter='All';state.batchFilter='';
+  }else if(kind==='class'){
+    state.batchFilter='';
+  }
+  state.attendanceDirty=false;
+  render();
 }
 function facultyAllowed(){return ['Super Admin','Admin','Academic Admin','Campus Admin','Attendance Operator'].includes(String(state.session.user?.Role||''));}
 function campusRestrictedUser(){const r=String(state.session.user?.Role||''); return r==='Campus Admin' || (!isSuperAdmin() && !!String(state.session.user?.Campus_ID||state.session.user?.Campus_Name||'').trim() && r!=='Attendance Operator');}
@@ -1588,21 +1584,150 @@ function seedLocalFacultyData(){
 function attendanceHTML(){
   const operator=attendanceOperatorUser();
   if(operator) state.campusFilter=assignedCampusName_();
-  const catPool=(state.data.batches||[]).filter(b=>(effectiveUiBranch()==='ALL'||String(b.Branch_ID||'BR001')===effectiveUiBranch()) && (!operator || String(b.Campus_Name||b.Campus||'').trim()===assignedCampusName_())).map(b=>String(b.Category_Name||b.Category||'').trim()).filter(Boolean);
+  const branch=effectiveUiBranch();
+  const catPool=(state.data.batches||[])
+    .filter(b=>studentAttendanceBatch_(b) && (branch==='ALL'||String(b.Branch_ID||'BR001')===branch) &&
+      (!operator || String(b.Campus_Name||b.Campus||'').trim()===assignedCampusName_()))
+    .map(b=>String(b.Category_Name||b.Category||'').trim()).filter(Boolean);
   const cats=['All',...new Set(catPool)];
-  const isHoliday=(state.data.calendar||[]).some(e=>String(e.Calendar_Date).slice(0,10)===state.date && String(e.Attendance_Required).toUpperCase()==='FALSE');
+  const isHoliday=(state.data.calendar||[]).some(e=>normalizeDateKey_(e.Calendar_Date)===normalizeDateKey_(state.date) && String(e.Attendance_Required).toUpperCase()==='FALSE');
   const superAdmin=isSuperAdmin();
   if(!superAdmin) state.branchFilter=String(state.session.user?.Branch_ID||'BR001');
   syncAttendanceFilters();
   if(operator) state.campusFilter=assignedCampusName_();
-  const selectedBranch=effectiveUiBranch(); const rows=scopedBatchesForAttendance();
+  const selectedBranch=effectiveUiBranch();
+  const rows=scopedBatchesForAttendance();
   const classes=attendanceClasses(), campuses=attendanceCampuses(), batchChoices=attendanceBatchChoices();
+  const datePicker=`<input class="input" type="date" aria-label="Attendance date" value="${escapeAttr(state.date)}" onchange="changeAttendanceDate_(this.value)">`;
   const tabs=`<div class="attendance-mode-tabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"><button class="btn ${state.attendanceMode==='student'?'btn-primary':'btn-secondary'}" onclick="switchAttendanceMode('student')">Student Attendance</button><button class="btn ${state.attendanceMode==='faculty'?'btn-primary':'btn-secondary'}" onclick="switchAttendanceMode('faculty')">Faculty / Teacher Attendance</button></div>`;
-  const filterMarkup=operator ? `<input class="input" type="date" value="${state.date}" onchange="state.date=this.value;state.openAttendanceBatchId='';state.attendanceDirty=false;loadData()"><select id="attendanceCategory" class="select" onchange="state.categoryFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="All">Select category</option>${cats.slice(1).map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.categoryFilter||state.categoryFilter==='All'?'disabled':''} onchange="state.classFilter=this.value;state.batchFilter='';render()"><option value="">${state.categoryFilter&&state.categoryFilter!=='All'?'Select class':'Select category first'}</option>${state.categoryFilter&&state.categoryFilter!=='All'?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><div class="select-like locked-filter">${escapeHtml(assignedCampusName_()||'Assigned Campus')}</div><select id="attendanceBatch" class="select" ${(!state.categoryFilter||state.categoryFilter==='All'||!state.classFilter||state.classFilter==='All')?'disabled':''} onchange="state.batchFilter=this.value;render()"><option value="">${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?'Select batch':'Select class first'}</option>${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>` : `${superAdmin?`<select class="select" onchange="state.branchFilter=this.value;state.categoryFilter='All';state.classFilter='All';state.campusFilter='';state.batchFilter='';render()"><option value="ALL">All branches</option>${branchOptionsHtml(selectedBranch)}</select>`:`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Branch_Name||'Assigned Branch')}</div>`}${campusRestrictedUser()?`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Campus_Name||campuses[0]||'Assigned Campus')}</div>`:`<select id="attendanceCampus" class="select" onchange="state.campusFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="">All campuses</option>${campuses.map(c=>`<option value="${escapeAttr(c)}" ${state.campusFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select>`}<select id="attendanceCategory" class="select" onchange="state.categoryFilter=this.value;state.classFilter='All';state.batchFilter='';render()"><option value="All">All categories</option>${cats.map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${c}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.campusFilter?'disabled':''} onchange="state.classFilter=this.value;state.batchFilter='';render()"><option value="All">${state.campusFilter?'All classes':'Select campus first'}</option>${state.campusFilter?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><select id="attendanceBatch" class="select" ${(!state.campusFilter||state.classFilter==='All')?'disabled':''} onchange="state.batchFilter=this.value;render()"><option value="">${state.campusFilter&&state.classFilter!=='All'?'All batches':'Select class first'}</option>${state.campusFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>`;
-  return `${tabs}<div class="card attendance-filter-card"><div class="section-title" style="margin:0 0 12px"><div><h2 style="margin:0">Daily Attendance</h2><div class="muted">${operator?'Campus-specific daily student attendance. Lists cascade Category → Class → Campus → Batch.':'Campus-scoped daily student attendance. Lists cascade from branch → category → class → campus → batch.'}</div></div><span class="badge badge-blue">${superAdmin?'Super Admin':operator?'Campus Restricted':'Branch Restricted'}</span></div><div class="toolbar attendance-filters">${filterMarkup}</div>
-  ${isHoliday?`<div class="badge badge-yellow" style="margin-bottom:14px">Attendance not required on this date according to the calendar.</div>`:''}
-  <div class="grid grid-6" style="margin-bottom:16px">${metricCard('Eligible',attendanceCounts().eligible,'Current filter','blue')}${metricCard('Present',attendanceCounts().Present,'Marked','green')}${metricCard('Absent',attendanceCounts().Absent,'Marked','red')}${metricCard('Leave',attendanceCounts().Leave,'Marked','yellow')}${metricCard('Sick',attendanceCounts().Sick,'Marked','blue')}${metricCard('Not Marked',Math.max(0,attendanceCounts().Not_Marked),'Pending','gray')}</div>
-  <div class="table-wrap"><table class="data-table"><thead><tr><th>Category</th><th>Class</th><th>Campus</th><th>Batch</th><th>Eligible</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(b=>{const x=batchAttendanceSummary(b); const badge=x.status==='Completed'?'badge-green':(x.status==='In Progress'?'badge-blue':'badge-yellow'); return `<tr><td>${escapeHtml(b.Category_Name||b.Category||'')}</td><td>${escapeHtml(classFromBatch_(b))}</td><td>${escapeHtml(b.Campus_Name||b.Campus||'')}</td><td><b>${escapeHtml(b.Batch_Code||'')}</b></td><td>${Number(b.Expected_Strength||0).toLocaleString()}</td><td><span class="badge ${badge}">${x.status}${x.marked?` • ${x.marked}/${x.eligible}`:''}</span></td><td><button class="btn btn-primary" onclick="openAttendance('${escapeAttr(b.Batch_ID)}')">${x.status==='Completed'?'Review':'Open'}</button></td></tr>`}).join('')||`<tr><td colspan="7" class="muted center">No matching campus/class/batch records.</td></tr>`}</tbody></table></div></div>`;
+  const filterMarkup=operator
+    ? `${datePicker}<select id="attendanceCategory" class="select" onchange="changeAttendanceFilter_('categoryFilter',this.value,'category')"><option value="All">Select category</option>${cats.slice(1).map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.categoryFilter||state.categoryFilter==='All'?'disabled':''} onchange="changeAttendanceFilter_('classFilter',this.value,'class')"><option value="">${state.categoryFilter&&state.categoryFilter!=='All'?'Select class':'Select category first'}</option>${state.categoryFilter&&state.categoryFilter!=='All'?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><div class="select-like locked-filter">${escapeHtml(assignedCampusName_()||'Assigned Campus')}</div><select id="attendanceBatch" class="select" ${(!state.categoryFilter||state.categoryFilter==='All'||!state.classFilter||state.classFilter==='All')?'disabled':''} onchange="changeAttendanceFilter_('batchFilter',this.value,'batch')"><option value="">${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?'Select batch':'Select class first'}</option>${state.categoryFilter&&state.classFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>`
+    : `${datePicker}${superAdmin?`<select class="select" onchange="changeAttendanceFilter_('branchFilter',this.value,'branch')"><option value="ALL">All branches</option>${branchOptionsHtml(selectedBranch)}</select>`:`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Branch_Name||'Assigned Branch')}</div>`}${campusRestrictedUser()?`<div class="select-like locked-filter">${escapeHtml(state.session.user?.Campus_Name||campuses[0]||'Assigned Campus')}</div>`:`<select id="attendanceCampus" class="select" onchange="changeAttendanceFilter_('campusFilter',this.value,'campus')"><option value="">All campuses</option>${campuses.map(c=>`<option value="${escapeAttr(c)}" ${state.campusFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select>`}<select id="attendanceCategory" class="select" onchange="changeAttendanceFilter_('categoryFilter',this.value,'category')"><option value="All">All categories</option>${cats.slice(1).map(c=>`<option value="${escapeAttr(c)}" ${state.categoryFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}</select><select id="attendanceClass" class="select" ${!state.campusFilter?'disabled':''} onchange="changeAttendanceFilter_('classFilter',this.value,'class')"><option value="All">${state.campusFilter?'All classes':'Select campus first'}</option>${state.campusFilter?classes.map(c=>`<option value="${escapeAttr(c)}" ${state.classFilter===c?'selected':''}>${escapeHtml(c)}</option>`).join(''):''}</select><select id="attendanceBatch" class="select" ${(!state.campusFilter||state.classFilter==='All')?'disabled':''} onchange="changeAttendanceFilter_('batchFilter',this.value,'batch')"><option value="">${state.campusFilter&&state.classFilter!=='All'?'All batches':'Select class first'}</option>${state.campusFilter&&state.classFilter!=='All'?batchChoices.map(b=>`<option value="${escapeAttr(b)}" ${state.batchFilter===b?'selected':''}>${escapeHtml(b)}</option>`).join(''):''}</select><button class="btn btn-secondary" onclick="go('settings')">Attendance Window</button>`;
+  const k=attendanceCounts();
+  const matrixDateReady=state.batchAttendanceMatrixDate===normalizeDateKey_(state.date);
+  const matrixLoading=isGAS()&&!matrixDateReady;
+  const matrixRows=rows.map(b=>{
+    const x=batchAttendanceSummary(b);
+    const disabled=x.attendanceRequired===false;
+    const badge=x.status==='Completed'?'badge-green':(x.status==='In Progress'?'badge-blue':'badge-yellow');
+    return `<tr class="batch-count-row" data-batch-id="${escapeAttr(b.Batch_ID)}" data-attendance-required="${disabled?'false':'true'}">
+      <td>${escapeHtml(b.Category_Name||b.Category||'')}</td>
+      <td>${escapeHtml(classFromBatch_(b))}</td>
+      <td>${escapeHtml(b.Campus_Name||b.Campus||'')}</td>
+      <td><b>${escapeHtml(b.Batch_Code||'')}</b></td>
+      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="eligible" value="${Number(x.eligible||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
+      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="present" value="${Number(x.Present||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
+      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="absent" value="${Number(x.Absent||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
+      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="leave" value="${Number(x.Leave||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
+      <td><input class="input batch-count-input" type="number" min="0" step="1" inputmode="numeric" data-field="sick" value="${Number(x.Sick||0)}" ${(disabled||matrixLoading)?'disabled':''} oninput="recalcBatchAttendanceRow_(this)"></td>
+      <td><b class="batch-count-not-marked">${Number(x.Not_Marked||0)}</b></td>
+      <td><span class="badge ${badge}">${escapeHtml(x.status)}</span>${disabled?'<div class="small muted">Not required</div>':''}</td>
+    </tr>`;
+  }).join('');
+  return `${tabs}<div class="card attendance-filter-card"><div class="section-title" style="margin:0 0 12px"><div><h2 style="margin:0">Daily Attendance</h2><div class="muted">Enter one set of totals for each batch. Eligible strength can be adjusted for the selected day; individual UIN-wise marking is not required.</div></div><span class="badge badge-blue">${superAdmin?'Super Admin':operator?'Assigned Batches':campusRestrictedUser()?'Campus Restricted':'Branch Restricted'}</span></div><div class="toolbar attendance-filters">${filterMarkup}</div>
+    ${isHoliday?`<div class="badge badge-yellow" style="margin-bottom:14px">Attendance not required on this date according to the calendar.</div>`:''}
+    <div class="grid grid-6" style="margin-bottom:16px">${metricCard('Eligible',k.eligible,'Current filter','blue')}${metricCard('Present',k.Present,'Marked','green')}${metricCard('Absent',k.Absent,'Marked','red')}${metricCard('Leave',k.Leave,'Marked','yellow')}${metricCard('Sick',k.Sick,'Marked','blue')}${metricCard('Not Marked',Math.max(0,k.Not_Marked),'Pending','gray')}</div>
+    <div class="section-title" style="margin:0 0 10px"><div><h3 style="margin:0">Batch-wise Attendance Count Matrix</h3><div class="muted">Present + Absent + Leave + Sick must not exceed Eligible. Any balance remains Not Marked.</div></div><div class="toolbar"><button class="btn btn-secondary" onclick="loadBatchAttendanceMatrix(true)">↻ Refresh</button><button class="btn btn-primary" onclick="saveBatchAttendanceCounts()" ${matrixLoading?'disabled':''}>${matrixLoading?'Loading…':'Save Attendance Counts'}</button></div></div>
+    ${!matrixDateReady&&isGAS()?'<div class="alert">Loading date-specific eligible counts and saved batch totals…</div>':''}
+    <div class="table-wrap"><table class="data-table" id="batchAttendanceMatrix"><thead><tr><th>Category</th><th>Class</th><th>Campus</th><th>Batch</th><th>Eligible</th><th>Present</th><th>Absent</th><th>Leave</th><th>Sick</th><th>Not Marked</th><th>Status</th></tr></thead><tbody>${matrixRows||`<tr><td colspan="11" class="muted center">No matching campus/class/batch records.</td></tr>`}</tbody></table></div>
+  </div>`;
+}
+
+function changeAttendanceDate_(value){
+  const next=normalizeDateKey_(value);
+  if(!next||next===normalizeDateKey_(state.date)) return;
+  if(state.attendanceDirty && !window.confirm('Discard unsaved attendance count edits and change the date?')){render();return;}
+  state.date=next;
+  state.attendanceDirty=false;
+  state.batchAttendanceMatrixDate='';
+  state.batchAttendanceMatrix=[];
+  state.data.dashboardSnapshot=null;
+  render();
+  loadBatchAttendanceMatrix(true);
+  refreshDashboardSnapshot(true);
+}
+
+function loadBatchAttendanceMatrix(force=false){
+  if(!isGAS()||!state.session.token){return;}
+  const dateKey=normalizeDateKey_(state.date);
+  if(!dateKey||state._batchAttendanceMatrixLoading) return;
+  if(!force && state.batchAttendanceMatrixDate===dateKey) return;
+  if(state.attendanceDirty) return;
+  state._batchAttendanceMatrixLoading=true;
+  const token=state.session.token;
+  google.script.run.withSuccessHandler(res=>{
+    state._batchAttendanceMatrixLoading=false;
+    if((state.page!=='attendance' && state.page!=='batches') || (state.page==='attendance' && state.attendanceMode!=='student') || normalizeDateKey_(state.date)!==dateKey || state.attendanceDirty) return;
+    state.batchAttendanceMatrix=Array.isArray(res?.rows)?res.rows:[];
+    state.batchAttendanceMatrixDate=dateKey;
+    render();
+  }).withFailureHandler(err=>{
+    state._batchAttendanceMatrixLoading=false;
+    if(state.batchAttendanceMatrixDate!==dateKey) showToast('Could not load batch attendance counts: '+(err.message||err));
+  }).getBatchAttendanceMatrix(token,dateKey);
+}
+
+function recalcBatchAttendanceRow_(input){
+  const row=input?.closest('.batch-count-row');
+  if(!row) return;
+  const get=field=>Number(row.querySelector(`[data-field="${field}"]`)?.value||0);
+  const eligible=get('eligible');
+  const marked=get('present')+get('absent')+get('leave')+get('sick');
+  const balance=row.querySelector('.batch-count-not-marked');
+  if(balance) balance.textContent=marked<=eligible?String(eligible-marked):'Exceeds Eligible';
+  row.style.outline=marked>eligible?'2px solid #dc2626':'';
+  state.attendanceDirty=true;
+}
+
+function saveBatchAttendanceCounts(){
+  if(isGAS() && state.batchAttendanceMatrixDate!==normalizeDateKey_(state.date)){showToast('Attendance counts are still loading. Please wait before saving.');return;}
+  const table=document.getElementById('batchAttendanceMatrix');
+  if(!table){showToast('Attendance matrix is not available.');return;}
+  const trs=[...table.querySelectorAll('tbody .batch-count-row')].filter(tr=>tr.dataset.attendanceRequired!=='false');
+  if(!trs.length){showToast('No eligible batch rows are available to save.');return;}
+  const rows=[];
+  for(const tr of trs){
+    const get=field=>Number(tr.querySelector(`[data-field="${field}"]`)?.value);
+    const batch=(state.data.batches||[]).find(b=>String(b.Batch_ID||'')===String(tr.dataset.batchId||''));
+    const values={batchId:String(tr.dataset.batchId||''),eligible:get('eligible'),present:get('present'),absent:get('absent'),leave:get('leave'),sick:get('sick')};
+    const label=String(batch?.Batch_Code||values.batchId);
+    if(!values.batchId||Object.values(values).slice(1).some(v=>!Number.isInteger(v)||!Number.isFinite(v)||v<0)){
+      showToast('Enter valid whole-number counts for batch '+label+'.');return;
+    }
+    if(values.present+values.absent+values.leave+values.sick>values.eligible){
+      showToast('Present + Absent + Leave + Sick cannot exceed Eligible for batch '+label+'.');return;
+    }
+    rows.push(values);
+  }
+  const payload={date:normalizeDateKey_(state.date),rows,markedBy:state.session.user?.User_ID||''};
+  if(isGAS()){
+    showToast('Saving batch-wise attendance counts…');
+    google.script.run.withSuccessHandler(res=>{
+      state.attendanceDirty=false;
+      state.batchAttendanceMatrixDate='';
+      const applied=applyAuthoritativeMutationResponse_(res,'attendance',true);
+      if(!applied) syncERPData({targetPage:'attendance',silent:true,force:true,preserveInputs:false});
+      refreshDashboardSnapshot(true);
+      showToast(`${res.saved||rows.length} batch attendance count record(s) saved.`);
+      setTimeout(()=>loadBatchAttendanceMatrix(true),150);
+    }).withFailureHandler(err=>showToast('Attendance count save failed: '+(err.message||err)))
+      .saveBatchAttendanceCounts(state.session.token,payload);
+  }else{
+    const saved=state.data.batchAttendanceSummaries||[];
+    rows.forEach(r=>{
+      const batch=(state.data.batches||[]).find(b=>String(b.Batch_ID||'')===r.batchId)||{};
+      const id=payload.date+'|'+r.batchId;
+      const obj={Attendance_Summary_ID:id,Attendance_Date:payload.date,Batch_ID:r.batchId,Batch_Code:batch.Batch_Code||'',Batch_Name:batch.Batch_Name||batch.Batch_Code||'',Category_Name:batch.Category_Name||'',Class_Name:batch.Class_Name||classFromBatch_(batch),Campus_ID:batch.Campus_ID||'',Campus_Name:batch.Campus_Name||'',Branch_ID:batch.Branch_ID||'',Branch_Name:batch.Branch_Name||'',Eligible_Count:r.eligible,Present_Count:r.present,Absent_Count:r.absent,Leave_Count:r.leave,Sick_Count:r.sick,Not_Marked_Count:r.eligible-r.present-r.absent-r.leave-r.sick,Marked_By:state.session.user?.User_ID||'local',Marked_At:new Date().toISOString(),Updated_By:state.session.user?.User_ID||'local',Updated_At:new Date().toISOString()};
+      const idx=saved.findIndex(x=>String(x.Attendance_Summary_ID||'')===id);
+      if(idx>=0)saved[idx]=obj;else saved.push(obj);
+    });
+    state.data.batchAttendanceSummaries=saved;
+    state.batchAttendanceMatrixDate='';
+    state.attendanceDirty=false;
+    state.data.dashboardSnapshot=null;
+    showToast(`${rows.length} batch attendance count record(s) saved locally.`);
+    render();
+  }
 }
 
 function openAttendance(batchId){
@@ -1625,47 +1750,60 @@ function renderAttendanceRoster(b,rows,sourceNote){
   document.getElementById('content').innerHTML=`<div class="card"><div class="section-title" style="margin-top:0"><div><h2>${escapeHtml(b.Batch_Code)} • ${escapeHtml(b.Category_Name)}</h2><div class="muted">${escapeHtml(b.Campus_Name)} • eligible source roster ${rows.length} • ${formatDate(state.date)}</div></div><button class="btn btn-secondary" onclick="state.openAttendanceBatchId='';state.attendanceDirty=false;render()">Back</button></div><div class="alert" style="margin-bottom:14px">${escapeHtml(sourceNote)}<br><b>Current saved status:</b> Present ${counts.Present} • Absent ${counts.Absent} • Leave ${counts.Leave} • Sick ${counts.Sick} • Not Marked ${counts.Not_Marked}</div><div class="toolbar"><button class="btn btn-success" onclick="markAll('Present')">Mark all Present</button><button class="btn btn-secondary" onclick="markAll('Absent')">Mark all Absent</button><button class="btn btn-secondary" onclick="markAll('Leave')">Mark all Leave</button><button class="btn btn-secondary" onclick="markAll('Sick')">Mark all Sick</button><button class="btn btn-primary" onclick="saveRosterAttendance('${escapeHtml(batchId)}')">Submit Attendance</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>UIN</th><th>Student</th><th>Father</th><th>Status</th><th>Attendance</th></tr></thead><tbody id="attBody">${rows.length?rows.map(r=>{const st=String(r.Attendance_Status||'Not Marked'); return `<tr><td><b>${escapeHtml(r.UIN)}</b></td><td>${escapeHtml(r.Student_Name)}</td><td>${escapeHtml(r.Father_Name||'')}</td><td>${escapeHtml(r.Overall_Status||'Active')}</td><td><select class="select att-select" data-uin="${escapeHtml(r.UIN)}">${['Not Marked','Present','Absent','Leave','Sick'].map(o=>`<option ${st===o?'selected':''}>${o}</option>`).join('')}</select></td></tr>`}).join(''):`<tr><td colspan="5" class="muted">No students are currently eligible for this batch on this date.</td></tr>`}</tbody></table></div></div>`;
 }
 
-function batchAttendanceSummary(b){
+function batchAttendanceSummary(b,dateOverride){
   const batchId=String(b.Batch_ID||'').trim();
   const batchCode=String(b.Batch_Code||'').trim().toUpperCase();
-  const date=state.date;
+  const date=normalizeDateKey_(dateOverride||state.date);
+  const matrix=state.batchAttendanceMatrixDate===date
+    ? (state.batchAttendanceMatrix||[]).find(r=>String(r.batchId||'').trim()===batchId)
+    : null;
+  const stored=(state.data.batchAttendanceSummaries||[]).find(r=>normalizeDateKey_(r.Attendance_Date||'')===date && String(r.Batch_ID||'').trim()===batchId);
+  const aggregate=matrix||stored;
+  if(aggregate){
+    const eligible=Number(aggregate.eligible??aggregate.Eligible_Count??b.Expected_Strength??0)||0;
+    const Present=Number(aggregate.present??aggregate.Present_Count??0)||0;
+    const Absent=Number(aggregate.absent??aggregate.Absent_Count??0)||0;
+    const Leave=Number(aggregate.leave??aggregate.Leave_Count??0)||0;
+    const Sick=Number(aggregate.sick??aggregate.Sick_Count??0)||0;
+    const marked=Present+Absent+Leave+Sick;
+    const Not_Marked=Math.max(0,eligible-marked);
+    const attendanceRequired=aggregate.attendanceRequired===undefined?true:aggregate.attendanceRequired!==false;
+    return {eligible,Present,Absent,Leave,Sick,Not_Marked,marked,status:eligible>0&&marked>=eligible?'Completed':marked>0?'In Progress':'Not Started',attendanceRequired,saved:!!(aggregate.saved||stored)};
+  }
+
   const studentUins=new Set();
-
-  // Build the live eligible roster from current allocations/student master so
-  // status is based on actual students, not only Batch Expected Strength.
   (state.data.allocations||[]).forEach(a=>{
-    if(String(a.Allocation_Status||'Active')!=='Active') return;
-    if(String(a.Batch_ID||'').trim()===batchId){
-      const u=String(a.UIN||'').trim().toUpperCase();
-      if(u) studentUins.add(u);
+    if(String(a.Allocation_Status||'Active').trim().toLowerCase()!=='active') return;
+    const ab=String(a.Batch_ID||'').trim();
+    const ac=String(a.Batch_Code||'').trim().toUpperCase();
+    if(ab===batchId||(!ab&&batchCode&&ac===batchCode)){
+      const u=String(a.UIN||'').trim().toUpperCase();if(u)studentUins.add(u);
     }
   });
-  (state.data.students||[]).forEach(s=>{
-    const status=String(s.Overall_Status||'Active').trim().toLowerCase();
-    if(['left','inactive','withdrawn','cancelled'].includes(status)) return;
-    const sb=String(s.Batch_ID||'').trim();
-    const sc=String(s.Batch_Code||s.Batch||s.Batch_Name||'').trim().toUpperCase();
-    if((batchId && sb===batchId) || (batchCode && sc===batchCode)){
-      const u=String(s.UIN||'').trim().toUpperCase();
-      if(u) studentUins.add(u);
+  (state.data.students||[]).forEach(st=>{
+    const overall=String(st.Overall_Status||'Active').trim().toLowerCase();
+    if(['left','inactive','withdrawn','cancelled'].includes(overall)) return;
+    const sb=String(st.Batch_ID||'').trim();
+    const sc=String(st.Batch_Code||st.Batch||st.Batch_Name||'').trim().toUpperCase();
+    if((batchId&&sb===batchId)||(batchCode&&sc===batchCode)){
+      const u=String(st.UIN||'').trim().toUpperCase();if(u)studentUins.add(u);
     }
   });
-
-  const fallbackEligible=Number(b.Expected_Strength||0);
-  const eligible=studentUins.size||fallbackEligible;
-  const rows=(state.data.attendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===normalizeDateKey_(date));
-  const unique={};
-  rows.forEach(r=>{
-    const u=String(r.UIN||'').trim().toUpperCase();
-    if(!u) return;
-    const sameBatch=String(r.Batch_ID||'').trim()===batchId || (!String(r.Batch_ID||'').trim() && studentUins.has(u));
-    if(sameBatch && (!studentUins.size || studentUins.has(u))) unique[u]=String(r.Attendance_Status||'').trim();
+  const eligible=studentUins.size||Number(b.Expected_Strength||b.batch_total||0);
+  const attendanceRows=(state.data.attendance||[]).filter(a=>normalizeDateKey_(a.Attendance_Date||'')===date);
+  const latest={};
+  attendanceRows.forEach(r=>{
+    const u=String(r.UIN||'').trim().toUpperCase();if(!u)return;
+    const sameBatch=String(r.Batch_ID||'').trim()===batchId || (!String(r.Batch_ID||'').trim()&&String(r.Batch_Code||'').trim().toUpperCase()===batchCode);
+    if(!sameBatch || (studentUins.size&&!studentUins.has(u)))return;
+    const stamp=Date.parse(String(r.Updated_At||r.Marked_At||''))||0;
+    if(!latest[u]||stamp>=latest[u].stamp)latest[u]={status:String(r.Attendance_Status||'').trim(),stamp};
   });
-
-  const markedStatuses=new Set(['Present','Absent','Leave','Sick']);
-  const marked=Object.values(unique).filter(st=>markedStatuses.has(st)).length;
-  const status=eligible>0&&marked>=eligible?'Completed':marked>0?'In Progress':'Not Started';
-  return {eligible,marked,status};
+  const counts={Present:0,Absent:0,Leave:0,Sick:0};
+  Object.values(latest).forEach(x=>{if(Object.prototype.hasOwnProperty.call(counts,x.status))counts[x.status]++;});
+  const marked=counts.Present+counts.Absent+counts.Leave+counts.Sick;
+  const Not_Marked=Math.max(0,eligible-marked);
+  return {eligible,...counts,Not_Marked,marked,status:eligible>0&&marked>=eligible?'Completed':marked>0?'In Progress':'Not Started',attendanceRequired:true,saved:marked>0};
 }
 
 function sourceAttendanceStudents_(b){
@@ -1998,7 +2136,38 @@ function confirmBatchMatrixImport() {
 function batchesHTML(){
   const rows=state.data.batches||[];
   const admin=String(state.session.user?.Role||'')==='Admin' && String(state.session.user?.Branch_ID||'')==='ALL';
-  return `<div class="card"><div class="section-title" style="margin-top:0"><div><h2>Batch / Campus Matrix</h2><span class="muted">${rows.length} matrix records • Student Batches + Faculty Groups</span></div><div class="toolbar">${admin?`<button class="btn btn-primary" onclick="openBatchMatrixImport()">⇧ Import Batch / Campus Matrix</button><button class="btn btn-secondary" onclick="batchMatrixTemplate()">Download Template</button>`:''}</div></div>${admin?`<div id="batchMatrixImportPanel" class="card-soft hidden" style="margin-bottom:14px"><div class="toolbar"><input id="batchMatrixFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleBatchMatrixFile(this)"></div><div class="muted small">Student fields: Branch_ID, Branch_Name, Programme, Category_Name, Campus_ID, Campus_Name, Batch_Code, Gender_Group, Expected_Strength. Faculty group fields: Record_Type=FACULTY_GROUP, Attendance_Group_Name=Trainee, Branch_ID, Campus_Name. Class/Batch may be blank for a faculty group.</div><div id="batchMatrixImportPreview" style="margin-top:10px"></div></div>`:''}<div class="table-wrap"><table class="data-table"><thead><tr><th>Type</th><th>Branch</th><th>Category / Group</th><th>Class</th><th>Campus</th><th>Batch / Group</th><th>Gender</th><th>Strength</th>${admin?'<th>Action</th>':''}</tr></thead><tbody>${rows.map(b=>{const fg=isFacultyAttendanceGroupBatch_(b);return `<tr data-batch-id="${escapeAttr(b.Batch_ID||'')}"><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${fg?'Faculty Group':'Student Batch'}</span></td><td>${escapeHtml(b.Branch_Name||b.Branch_ID||'')}</td><td><span class="badge ${fg?'badge-purple':'badge-blue'}">${escapeHtml(fg?facultyGroupName_(b):(b.Category_Name||''))}</span></td><td>${escapeHtml(fg?'—':(b.Class_Name||batchClassName(b)||'—'))}</td><td>${escapeHtml(b.Campus_Name||'')}</td><td><b>${escapeHtml(fg?facultyGroupName_(b):(b.Batch_Code||b.Batch_Name||''))}</b></td><td>${escapeHtml(fg?'—':(b.Gender_Group||''))}</td><td>${fg?'—':Number(b.Expected_Strength||0).toLocaleString()}</td>${admin?`<td><button class="btn btn-secondary" onclick="batchEditRow('${escapeAttr(b.Batch_ID||'')}')">✎ Edit</button></td>`:''}</tr>`}).join('')}</tbody></table></div></div>`;
+  const dateKey=normalizeDateKey_(state.date);
+  const matrixReady=state.batchAttendanceMatrixDate===dateKey;
+  const dateControl=`<input class="input" type="date" aria-label="Attendance summary date" value="${escapeAttr(dateKey)}" onchange="changeAttendanceDate_(this.value)">`;
+  const studentRows=rows.map(b=>{
+    const fg=isFacultyAttendanceGroupBatch_(b);
+    const daily=fg?null:batchAttendanceSummary(b,dateKey);
+    const status=daily?.status||'—';
+    const tone=status==='Completed'?'badge-green':(status==='In Progress'?'badge-blue':'badge-yellow');
+    return `<tr data-batch-id="${escapeAttr(b.Batch_ID||'')}">
+      <td><span class="badge ${fg?'badge-purple':'badge-blue'}">${fg?'Faculty Group':'Student Batch'}</span></td>
+      <td>${escapeHtml(b.Branch_Name||b.Branch_ID||'')}</td>
+      <td><span class="badge ${fg?'badge-purple':'badge-blue'}">${escapeHtml(fg?facultyGroupName_(b):(b.Category_Name||''))}</span></td>
+      <td>${escapeHtml(fg?'—':(b.Class_Name||batchClassName(b)||'—'))}</td>
+      <td>${escapeHtml(b.Campus_Name||'')}</td>
+      <td><b>${escapeHtml(fg?facultyGroupName_(b):(b.Batch_Code||b.Batch_Name||''))}</b></td>
+      <td>${escapeHtml(fg?'—':(b.Gender_Group||''))}</td>
+      <td>${fg?'—':Number(b.Expected_Strength||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.eligible||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.Present||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.Absent||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.Leave||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.Sick||0).toLocaleString()}</td>
+      <td>${fg?'—':Number(daily?.Not_Marked||0).toLocaleString()}</td>
+      <td>${fg?'—':`<span class="badge ${tone}">${escapeHtml(status)}</span>`}</td>
+      ${admin?`<td><button class="btn btn-secondary" onclick="batchEditRow('${escapeAttr(b.Batch_ID||'')}')">✎ Edit</button></td>`:''}
+    </tr>`;
+  }).join('');
+  return `<div class="card"><div class="section-title" style="margin-top:0"><div><h2>Batch / Campus Matrix</h2><span class="muted">${rows.length} matrix records • Student Batches + Faculty Groups</span></div><div class="toolbar">${dateControl}<button class="btn btn-secondary" onclick="loadBatchAttendanceMatrix(true)">↻ Refresh Counts</button>${admin?`<button class="btn btn-primary" onclick="openBatchMatrixImport()">⇧ Import Batch / Campus Matrix</button><button class="btn btn-secondary" onclick="batchMatrixTemplate()">Download Template</button>`:''}</div></div>
+  <div class="muted small" style="margin:0 0 12px">Daily attendance totals are read from the batch-wise attendance entries for the selected date. The original master Strength remains unchanged.</div>
+  ${!matrixReady&&isGAS()?'<div class="alert">Loading attendance counts for the selected date…</div>':''}
+  ${admin?`<div id="batchMatrixImportPanel" class="card-soft hidden" style="margin-bottom:14px"><div class="toolbar"><input id="batchMatrixFile" type="file" accept=".csv,.xlsx,.xls" class="input" onchange="handleBatchMatrixFile(this)"></div><div class="muted small">Student fields: Branch_ID, Branch_Name, Programme, Category_Name, Campus_ID, Campus_Name, Batch_Code, Gender_Group, Expected_Strength. Faculty group fields: Record_Type=FACULTY_GROUP, Attendance_Group_Name=Trainee, Branch_ID, Campus_Name. Class/Batch may be blank for a faculty group.</div><div id="batchMatrixImportPreview" style="margin-top:10px"></div></div>`:''}
+  <div class="table-wrap"><table class="data-table"><thead><tr><th>Type</th><th>Branch</th><th>Category / Group</th><th>Class</th><th>Campus</th><th>Batch / Group</th><th>Gender</th><th>Master Strength</th><th>Eligible (${escapeHtml(formatDate(dateKey))})</th><th>Present</th><th>Absent</th><th>Leave</th><th>Sick</th><th>Not Marked</th><th>Daily Status</th>${admin?'<th>Action</th>':''}</tr></thead><tbody>${studentRows||`<tr><td colspan="${admin?16:15}" class="muted center">No matrix records available.</td></tr>`}</tbody></table></div></div>`;
 }
 let managementReportCache={};
 function reportScopedBatches(){
@@ -2042,7 +2211,7 @@ function reportsHTML(){
     ['movement','Student Movement Register','Campus, batch and residential movement transactions with effective dates.','purple'],
     ['residence','Hosteller ↔ Day Scholar Report','Current and recorded residential-status conversions.','gold'],
     ['leftout','Left / Withdrawn Students','Students whose current master status is Left, Withdrawn, Inactive or Cancelled.','red'],
-    ['exceptions','Attendance Exception Report','Absent, Leave, Sick and Not Marked students requiring attention.','green'],
+    ['exceptions','Attendance Exception Report','Batch-wise Absent, Leave, Sick and Not Marked totals requiring attention.','green'],
     ['faculty','Faculty / Teacher Attendance Report','Subject-wise daily faculty attendance records.','purple']
   ];
   return `<div class="section-title"><div><h2>Management Reports</h2><span class="muted">Generate live reports from the authorised branch data and current ERP records.</span></div></div>
@@ -2092,9 +2261,11 @@ function generateManagementReport(type){
   let title='', headers=[], rows=[];
   if(type==='attendance'){
     title=`Daily Attendance Report • ${formatDate(reportDate)}`;
-    headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Attendance'];
-    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a);
-    rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();const a=today[u];return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),a?.Attendance_Status||'Not Marked'];});
+    headers=['Category','Class','Campus','Batch','Eligible','Present','Absent','Leave','Sick','Not Marked'];
+    rows=batchMatches.map(b=>{
+      const x=batchAttendanceSummary(b,reportDate);
+      return [b.Category_Name||'',batchClassName(b),b.Campus_Name||b.Campus||'',b.Batch_Code||b.Batch_Name||'',x.eligible,x.Present,x.Absent,x.Leave,x.Sick,x.Not_Marked];
+    });
   }else if(type==='movement'){
     title='Student Movement Register';
     headers=['UIN','Movement Type','From Branch','To Branch','From Batch','To Batch','From Campus','To Campus','Residence','Effective Date','Status','Requested By'];
@@ -2120,9 +2291,11 @@ function generateManagementReport(type){
     }).map(a=>[a.Attendance_Date||'',a.Branch_Name||'',managementBatchName({Batch_ID:a.Batch_ID})||'',a.Faculty_Name||a.Faculty_ID||'',a.Subject_Name||'',a.Attendance_Status||'',a.Remarks||'']);
   }else{
     title=`Attendance Exception Report • ${formatDate(reportDate)}`;
-    headers=['UIN','Student Name',"Father's Name",'Category','Class','Campus','Batch','Status'];
-    const today={};att.filter(a=>normalizeDateKey_(a.Attendance_Date||'')===reportDate).forEach(a=>today[String(a.UIN||'').trim().toUpperCase()]=a.Attendance_Status);
-    rows=students.map(s=>{const u=String(s.UIN||'').trim().toUpperCase();return [u,s.Student_Name||'',s.Father_Name||'',s.Category_Name||'',s.Class_Name||'',managementCampusName(s),managementBatchName(s),today[u]||'Not Marked'];}).filter(r=>['Absent','Leave','Sick','Not Marked'].includes(r[7]));
+    headers=['Category','Class','Campus','Batch','Eligible','Absent','Leave','Sick','Not Marked'];
+    rows=batchMatches.map(b=>{
+      const x=batchAttendanceSummary(b,reportDate);
+      return [b.Category_Name||'',batchClassName(b),b.Campus_Name||b.Campus||'',b.Batch_Code||b.Batch_Name||'',x.eligible,x.Absent,x.Leave,x.Sick,x.Not_Marked];
+    }).filter(r=>Number(r[5]||0)+Number(r[6]||0)+Number(r[7]||0)+Number(r[8]||0)>0);
   }
   // If no student master rows are present but batch matrix data matches, make that explicit rather than showing unrelated records.
   managementReportCache={type,title,headers,rows,filters:{campusName,className,batchCode,reportDate,batchCount:batchMatches.length}};
